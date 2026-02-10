@@ -6,6 +6,7 @@ import type { Node as FlowNode } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedGraph } from '@/components/Graph/Layout';
 import Loading from '../Loading';
+import { ComplexityLegend } from '../ComplexityLegend';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Analysis, ASTFileData, ASTResult } from '@/types/repo_analysis_type';
 import { getItem } from '@/utils/indexedDB';
@@ -75,8 +76,10 @@ function ArchitectureGraph() {
   };
 
   return (
-    <div className='h-full w-full'>
-      <AnimatePresence mode="wait">
+    <div className='h-full w-full flex flex-col gap-4 p-4'>
+      <ComplexityLegend />
+      <div style={{ height: 'calc(100% - 200px)', width: '100%' }}>
+        <AnimatePresence mode="wait">
         {loading ? (
           <motion.div
             key="loading"
@@ -141,6 +144,7 @@ function ArchitectureGraph() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }

@@ -9,6 +9,8 @@ import {repoAnalysisRoute, repoVerifyRoute } from "@/utils/APIRoutes";
 import { clearAll, setItem } from "@/utils/indexedDB";
 import { Analysis } from "@/types/repo_analysis_type";
 import { v4 as uuidv4 } from "uuid";
+import Link from "next/link";
+import { getAuthToken } from "@/utils/auth";
 
 
 type FormProps = {
@@ -71,11 +73,13 @@ export function Form({ setParentLoading, setParentRequestId }:FormProps) {
     setParentLoading(true);
     setParentRequestId(requestId)
     try{
+      const token = getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
       const response = await axios.post(repoAnalysisRoute, {
         repo_url:repoUrl,
         branch:branch,
         request_id: requestId,
-      });
+      }, { headers });
       if (response.data.error) {
         setErrorMessage(`Error: ${response.data.error}`);
         return; 
@@ -120,6 +124,18 @@ export function Form({ setParentLoading, setParentRequestId }:FormProps) {
         <button type="submit" className="shadow-[inset_0_0_0_2px_#616467] w-full text-black px-12 py-4 rounded-full tracking-widest uppercase font-bold bg-transparent hover:bg-[#616467] hover:text-white dark:text-neutral-200 transition duration-200">
             Analyze
         </button>
+
+        <p className="mt-4 text-xs text-neutral-400 text-center">
+          Want your history saved?{" "}
+          <Link className="text-neutral-200 underline underline-offset-4" href="/auth/login">
+            Sign in
+          </Link>
+          {" "}or{" "}
+          <Link className="text-neutral-200 underline underline-offset-4" href="/auth/signup">
+            create an account
+          </Link>
+          .
+        </p>
         
       </form>
     </div>

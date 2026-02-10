@@ -1,8 +1,11 @@
 import os
 import random
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 def build_dependency_graph(ast_dict):
-    print("Building dependency graph")
+    logger.info("Building dependency graph")
     nodes = {}
     edges = []
 
@@ -53,8 +56,8 @@ def build_dependency_graph(ast_dict):
                             "position": { "x": random.randint(0, 800), "y": random.randint(0, 800) }
                         }
 
-    print("\n✅ React Flow dependency graph built.")
-    print(f"Total nodes: {len(nodes)}, Total edges: {len(edges)}")
+    logger.info("React Flow dependency graph built.")
+    logger.info(f"Total nodes: {len(nodes)}, Total edges: {len(edges)}")
 
     return {
         "nodes": list(nodes.values()),

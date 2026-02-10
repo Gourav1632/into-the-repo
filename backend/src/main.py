@@ -1,11 +1,30 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.api import analysis
+from src.api import auth_routes
+from src.database import init_db
+from src.rate_limiter import init_limiter
+from src.logger import get_logger
 import os
+
+logger = get_logger(__name__)
 
 FRONTEND_HOST = os.getenv("FRONTEND_HOST")
 
 app = FastAPI()
+
+# Initialize rate limiter
+init_limiter(app)
+
+# Initialize database tables on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database tables when the app starts."""
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.warning(f"Could not initialize database: {e}")
 
 # Allowed origins for CORS (add your frontend URLs here)
 origins = [
@@ -27,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(analysis.router)
+app.include_router(auth_routes.router)
 
 @app.get("/")
 def read_root():

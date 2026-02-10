@@ -4,7 +4,12 @@ import uuid
 import os
 from dotenv import load_dotenv
 from pathlib import Path
+from typing import Dict, Any, Optional
 import google.generativeai as genai
+from src.services.cache import RedisCache
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Load .env
 env_path = Path(__file__).resolve().parents[2] / ".env"
@@ -15,8 +20,6 @@ if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY not found in environment variables.")
 
 genai.configure(api_key=GOOGLE_API_KEY)
-
-conversation_memory = {}
 
 SYSTEM_PROMPT = {
     "parts": [
@@ -43,22 +46,51 @@ SYSTEM_PROMPT = {
 }
 
 
-def askAI(question: str, code: str, history_id: str = None) -> dict:
+def askAI(question: str, code: str, history_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Process a question with code context using the Gemini AI model with Redis caching.
+    
+    Chat history is stored in Redis with a 1-hour TTL. Each session maintains state
+    including the last code analyzed to optimize context switching.
+    
+    Args:
+        question: User's question or query
+        code: Code snippet related to the question
+        history_id: Optional session ID for conversation continuity
+    
+    Returns:
+        Dictionary with answer, history_id, and optional error
+    """
     if not history_id:
         history_id = str(uuid.uuid4())
 
-    if history_id not in conversation_memory:
-        conversation_memory[history_id] = {
-            "chat": genai.GenerativeModel("gemini-1.5-flash", system_instruction=SYSTEM_PROMPT).start_chat(history=[]),
+    # Try to load chat history from Redis
+    chat_data = RedisCache.get_chat_history(history_id)
+    
+    if chat_data is None:
+        # Create new chat session
+        chat = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        ).start_chat(history=[])
+        chat_data = {
+            "chat": None,  # Chat object can't be serialized, we'll reconstruct on demand
+            "history": [],
             "last_code": None
         }
+    else:
+        # Reconstruct chat object from history
+        chat = genai.GenerativeModel(
+            "gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        ).start_chat(history=chat_data.get("history", []))
 
-    chat = conversation_memory[history_id]["chat"]
-    last_code = conversation_memory[history_id]["last_code"]
+    last_code = chat_data.get("last_code")
 
+    # Determine user input based on code change
     if code != last_code:
         user_input = f"Question: {question}\n\nCode:\n{code}"
-        conversation_memory[history_id]["last_code"] = code
+        chat_data["last_code"] = code
     else:
         user_input = f"Follow-up Question: {question}"
 
@@ -66,9 +98,16 @@ def askAI(question: str, code: str, history_id: str = None) -> dict:
         response = chat.send_message(user_input)
         response_text = response.text.strip()
 
+        # Clean JSON response
         cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", response_text, flags=re.IGNORECASE)
         parsed = json.loads(cleaned)
         answer = parsed.get("answer", "")
+
+        # Update chat history in cache
+        chat_data["history"].append({"role": "user", "parts": [user_input]})
+        chat_data["history"].append({"role": "model", "parts": [response_text]})
+        RedisCache.set_chat_history(history_id, chat_data)
+        RedisCache.set_last_code(history_id, code)
 
         return {
             "answer": answer,
@@ -76,10 +115,22 @@ def askAI(question: str, code: str, history_id: str = None) -> dict:
         }
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        logger.error(f"AI service error: {str(e)}")
         return {
             "error": "AI service unavailable or invalid response.",
             "question": question,
-            "code": code,
             "history_id": history_id
         }
+
+
+def reset_chat_history(history_id: str) -> bool:
+    """
+    Reset (delete) chat history for a given session ID from Redis.
+    
+    Args:
+        history_id: Session ID to delete
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    return RedisCache.delete_chat_history(history_id)

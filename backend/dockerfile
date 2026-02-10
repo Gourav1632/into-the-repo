@@ -6,12 +6,21 @@ WORKDIR /app
 # Install required system packages
 RUN apt-get update && apt-get install -y gcc git && rm -rf /var/lib/apt/lists/*
 
+# Create a non-root user for security
+RUN useradd -m -u 1000 appuser
+
 # Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source code
 COPY src/ ./src/
+
+# Change ownership of the app directory to appuser
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Run the application using Uvicorn
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

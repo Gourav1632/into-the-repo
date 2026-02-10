@@ -8,6 +8,9 @@ import google.generativeai as genai
 from google.api_core.exceptions import GoogleAPIError
 import re
 from src.services.ast_parser import detect_file_language
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Load .env from root directory
 env_path = Path(__file__).resolve().parents[2] / ".env"
@@ -64,7 +67,7 @@ def analyze_code(repo_url: str, branch: str, relative_path: str) -> Dict[str, st
     except json.JSONDecodeError:
         raise ValueError(f"Invalid JSON returned by Gemini: {response_text}")
     except GoogleAPIError as e:
-        print(f"Gemini error: {str(e)}")
+        logger.error(f"Gemini API error: {str(e)}")
         return {
             "error": "Gemini AI service is currently unavailable. Please try again later.",
             "code": code,

@@ -19,6 +19,93 @@
 - **Code Parsing:** Tree-sitter
 - **APIs:** GitHub API, Gemini API
 - **Streaming:** Server-Sent Events (SSE)
+- **Caching:** Redis (in-memory cache for chat history)
+- **Database:** PostgreSQL (persistent analysis cache + user data)
+
+## 🏗️ System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         CLIENT LAYER                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  Next.js Frontend (Port 3000)                                        │
+│  ├─ Auth Pages (Login/Signup)                                       │
+│  ├─ Dashboard (Recent Scans)                                        │
+│  ├─ Analysis Views (Architecture, Dependencies, History)            │
+│  └─ Local Storage: JWT Token + IndexedDB Cache                      │
+└────────────────────────█──────────────────────────────────────────────┘
+                         │ HTTP/HTTPS
+                         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       GATEWAY & LOAD BALANCER                        │
+├─────────────────────────────────────────────────────────────────────┤
+│  CORS Middleware                                                    │
+│  Rate Limiting: 5 requests/minute on /analyze                      │
+└────────────────────────█──────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      BACKEND API LAYER                               │
+├─────────────────────────────────────────────────────────────────────┤
+│  FastAPI Application (Port 8000)                                    │
+│  ├─ POST /signup & /login (JWT Authentication)                     │
+│  ├─ POST /analyze (Async Background Task with SSE Status)          │
+│  ├─ GET /user/history (User's Past Analyses)                       │
+│  ├─ GET /ai/chat (Chat with Code Context)                          │
+│  └─ Async Processing with BackgroundTasks                          │
+└────────┬──────────────────────────┬──────────────────────────────────┘
+         │                          │
+         ▼                          ▼
+    [SERVICE LAYER]           [PERSISTENCE]
+    ┌────────────────┐        ┌──────────────┐
+    │ Git Analyzer   │────┐   │ PostgreSQL   │
+    ├────────────────┤    │   │ Database     │
+    │ AST Parser     │    │   ├──────────────┤
+    │ (Tree-sitter)  │    │   │ Users Table  │
+    ├────────────────┤    │   │ Analysis     │
+    │ Summarizer     │    └──▶│ Cache Table  │
+    │ (Gemini AI)    │        │ (JSONB)      │
+    ├────────────────┤        └──────────────┘
+    │ Graph Builder  │
+    └────────┬───────┘
+             │
+             ▼
+    ┌──────────────────────┐
+    │ Redis Cache          │
+    ├──────────────────────┤
+    │ Chat History (1h TTL)│
+    │ Session State        │
+    │ Rate Limit Counters  │
+    └──────────────────────┘
+```
+
+## 🔄 Data Flow
+
+```
+1. USER AUTHENTICATION
+   Browser → Next.js → FastAPI /login → PostgreSQL → JWT Token → IndexedDB
+
+2. REPOSITORY ANALYSIS (Async)
+   Browser → FastAPI /analyze → Returns task_id
+   ├─ Background Task: Git Clone (shallow)
+   ├─ AST Parsing (Tree-sitter)
+   ├─ AI Summarization (Gemini)
+   ├─ Cache Results in PostgreSQL
+   └─ Frontend Polls SSE for Status Updates
+
+3. QUICK CACHE LOOKUP
+   New Request → PostgreSQL JSONB Cache → Instant Response (no re-parsing)
+
+4. AI CHAT WITH CONTEXT
+   User Query + Code → Redis Session → Gemini API → JSON Response
+   (Chat history persisted for 1 hour per session)
+
+5. PERFORMANCE OPTIMIZATION
+   ├─ Shallow Git Clone: ~90% faster ingestion
+   ├─ Smart Cache: Skip re-parsing for popular repos
+   ├─ Async Tasks: Non-blocking API responses
+   └─ Redis Caching: Stateless horizontal scaling
+```
 
 ## 📦 Installation
 
