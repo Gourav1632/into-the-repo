@@ -21,14 +21,31 @@ function Analyze() {
 
     useEffect( () => {
       const setFileList = async ()=>{
+        console.log("[DEBUG] Analyze page useEffect: fetching repoAnalysis from IndexedDB");
         const analysis = await getItem<Analysis>("repoAnalysis")
-        if (!analysis) return;
+        console.log("[DEBUG] Fetched analysis from IndexedDB:", analysis);
+        
+        if (!analysis || !analysis.repo_analysis) {
+          console.log("[DEBUG] No analysis data found, exiting early");
+          return;
+        }
+        
+        console.log("[DEBUG] repo_analysis structure:", analysis.repo_analysis);
+        console.log("[DEBUG] repo_analysis keys:", Object.keys(analysis.repo_analysis));
     
         try {
+          console.log("[DEBUG] Extracting file names from analysis");
+          console.log("[DEBUG] repo_analysis.ast:", analysis.repo_analysis.ast);
+          console.log("[DEBUG] typeof ast:", typeof analysis.repo_analysis.ast);
+          console.log("[DEBUG] ast keys:", Object.keys(analysis.repo_analysis.ast || {}));
+          
           const files = extractFileNames(analysis.repo_analysis.ast);
+          console.log("[DEBUG] Extracted files:", files);
+          
           await setItem<string[]>("fileList",files)
+          console.log("[DEBUG] File list saved to IndexedDB");
         } catch (error) {
-          console.error('Failed to parse repoAnalysis:', error);
+          console.error('[DEBUG] Failed to parse repoAnalysis:', error);
         }
       }
       setFileList();

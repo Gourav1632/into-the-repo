@@ -10,7 +10,6 @@ import {
   IconCode,
   IconRouteSquare2,
   IconHome,
-  IconHistory,
 } from "@tabler/icons-react";
 
 const links = [
@@ -28,10 +27,6 @@ const links = [
     title: "Git Analysis",
     icon: <IconGitBranch className="h-full w-full text-neutral-500 dark:text-neutral-300" />,
     href: "/analyze/commits",
-  },{
-    title: "Recent Scans",
-    icon: <IconHistory className="h-full w-full text-neutral-500 dark:text-neutral-300" />,
-    href: "/analyze/history",
   },{
     title: "File Analysis",
     icon: <IconFileAnalytics className="h-full w-full text-neutral-500 dark:text-neutral-300" />,

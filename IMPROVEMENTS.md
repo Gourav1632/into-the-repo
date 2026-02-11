@@ -1,120 +1,71 @@
-Phase 1: Infrastructure & "Speed" Upgrades
-Focus: Fixing the bottlenecks immediately.
+🛑 Phase 1: Critical Performance Fix (Immediate)
+Goal: Reduce analysis time from ~30s to <5s for average repos by removing HTTP calls from the loop.
 
-[x] Update backend/requirements.txt: Add these libraries:
+[ ] Refactor git_utils.py
 
-sqlalchemy (ORM)
+Change get_repo_git_analysis to accept local_repo_path instead of repo_url.
 
-psycopg2-binary (Postgres Driver)
+Replace requests.get loop with subprocess.run(["git", "log", ...]).
 
-redis (Cache Driver)
+Parse the raw string output from git log to build your JSON stats.
 
-passlib[bcrypt] (Password Hashing)
+[ ] Update analysis.py
 
-python-jose[cryptography] (JWT Token)
+Ensure get_repo_git_analysis is called after clone_repo_shallow completes.
 
-slowapi (Rate Limiting)
+Pass the temporary directory path from the clone step into the analysis function.
 
-[x] Create docker-compose.yml:
+🚀 Phase 2: Asynchronous Scalability (The "Major Project" Pivot)
+Goal: Prevent your API from crashing under load by moving heavy work out of the web server.
 
-Define service: backend (Your FastAPI app)
+[ ] Add a Task Queue (Celery or ARQ)
 
-Define service: db (Postgres 15)
+Add celery and redis to backend/requirements.txt.
 
-Define service: cache (Redis 7)
+Create a new file backend/src/worker.py to handle the cloning and parsing logic.
 
-Why: Simulates a real microservices environment.
+[ ] Update docker-compose.yml
 
-[x] Optimize git_utils.py (Critical Performance Fix):
+Add a new service worker that runs the Celery worker process (e.g., command: celery -A src.worker worker).
 
-Replace the file-by-file HTTP download loop with subprocess.run(["git", "clone", "--depth", "1", ...]).
+Ensure it shares the db and cache networks.
 
-Resume Win: "Reduced repository ingestion time by ~90% using shallow cloning."
+[ ] Refactor API Endpoint
 
-Phase 2: Scalability & Caching Architecture
-Focus: Making the system handle high load without crashing.
+Change POST /analyze to simply push a task to Redis and return a task_id.
 
-[x] Implement Asynchronous Parsing:
+Remove FastAPI.BackgroundTasks (it's not robust enough for production).
 
-Refactor backend/src/api/analysis.py to use fastapi.BackgroundTasks.
+🧠 Phase 3: Intelligent Large-Scale Analysis (RAG)
+Goal: Handle 100k+ line repos without hitting LLM context limits.
 
-The API should return a task_id immediately, and the frontend should poll for status (or use SSE events).
+[ ] Enable Vector Support
 
-Resume Win: "Implemented non-blocking async architecture for CPU-intensive parsing tasks."
+Update docker-compose.yml to use a Postgres image with pgvector (e.g., pgvector/pgvector:pg15).
 
-[x] Implement Redis for AI Chat (ask_ai.py):
+[ ] Implement Embeddings
 
-Replace the global conversation_memory = {} dictionary with a Redis client.
+In ast_parser.py, instead of just returning a JSON tree, generate text embeddings for every function/class node using Gemini Embedding API.
 
-Store chat history with a 1-hour TTL (Time-To-Live).
+Store these vectors in a new code_embeddings table in Postgres.
 
-Resume Win: "Designed a stateless backend using Redis, enabling horizontal scaling."
+[ ] Semantic Search
 
-[x] Implement PostgreSQL "Smart Cache":
+Update ask_ai.py to query the vector DB for relevant code snippets before sending the prompt to Gemini.
 
-Create backend/src/database.py and backend/src/models.py.
+🛡️ Phase 4: Reliability & Testing
+Goal: Prove to recruiters that this is a stable engineering project, not a hackathon prototype.
 
-Define a RepoAnalysis table with a JSONB column to store the AST results.
+[ ] Add Testing Framework
 
-In your analysis logic: Check DB first. If found, return instantly. If not, parse and save.
+Add pytest and httpx to backend/requirements.txt.
 
-Resume Win: "Engineered a persistent caching layer reducing redundant compute for popular repos."
+[ ] Write Unit Tests
 
-Phase 3: Security & SaaS Features
-Focus: Turning a "script" into a "platform."
+Create backend/tests/test_git_utils.py to test your new regex parsing logic.
 
-[x] Implement User Authentication:
+Create backend/tests/test_api.py to test the /analyze endpoint behavior.
 
-Create User model in Postgres.
+[ ] Add CI/CD
 
-Create backend/src/auth.py for JWT handling and Password Hashing.
-
-Add POST /signup and POST /login endpoints.
-
-[x] Add User History:
-
-Create UserAnalysisHistory table (Linking User -> RepoAnalysis).
-
-Update POST /analyze to accept an Authorization header and save the scan to the user's history.
-
-[x] Implement Rate Limiting:
-
-Initialize slowapi in main.py.
-
-Add @limiter.limit("5/minute") to the /analyze endpoint.
-
-Resume Win: "Secured API with JWT auth and Rate Limiting to prevent abuse."
-
-Phase 4: Frontend & Visualization
-Focus: The visual "Wow" factor.
-
-[x] Auth Pages:
-
-Create simple Login / Signup forms in Next.js.
-
-Store the JWT in localStorage.
-
-[x] "Recent Scans" Dashboard:
-
-Create a page that calls a new endpoint GET /user/history and lists the user's past analyses.
-
-[x] Visualize Complexity:
-
-Update your Graph component. If complexity > 10, color the node Red. If < 5, color it Green.
-
-Why: Shows you didn't just parse code, you analyzed it.
-
-Phase 5: DevOps & Polish
-Focus: Production readiness.
-
-[ ] Standardize Logging:
-
-Replace all print() statements with a JSON logger configuration.
-
-[ ] Harden Docker:
-
-Add RUN useradd -m appuser and USER appuser to your Dockerfile.
-
-[ ] Documentation:
-
-Update README with a System Architecture Diagram (Next.js <-> FastAPI <-> Redis/PG).
+Create .github/workflows/test.yml to run these tests automatically on every commit.

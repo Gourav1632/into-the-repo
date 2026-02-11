@@ -3,46 +3,28 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from fastapi.concurrency import run_in_threadpool
 import asyncio
-from src.services.ast_parser import parse_code
-from src.services.per_file_graph_builder import build_per_file_graph, build_call_graph
-from src.services.summarizer import analyze_code
-from src.services.git_utils import get_repo_git_analysis, is_repo_private, branch_exists
-from src.services.ask_ai import askAI, reset_chat_history
-from src.auth import verify_token
-from src.database import get_db
-from src.models import RepoAnalysis, UserAnalysisHistory
-from src.rate_limiter import limiter
+import os
+import shutil
+from src.services.analysis.ast_parser import parse_code
+from src.services.analysis.per_file_graph_builder import build_per_file_graph, build_call_graph
+from src.services.analysis.summarizer import analyze_code
+from src.services.utilities.git_utils import get_repo_git_analysis, is_repo_private, branch_exists, clone_repo_shallow
+from src.services.ai.ask_ai import askAI, reset_chat_history
+from src.core.security import verify_token
+from src.core.database import get_db
+from src.models.database import RepoAnalysis, UserAnalysisHistory
+from src.middleware.rate_limiter import limiter
+from src.core.logging import get_logger
 from sqlalchemy.orm import Session
 import traceback
 from fastapi.responses import StreamingResponse
 from src.shared.progress import progress_data
 from fastapi import Request
+from src.tasks.worker import app as celery_app
+from src.schemas.requests import AskRequest, RepoRequest, FileGraphRequest, VerifyRequest
 
 router = APIRouter()
-
-# === Request Schemas ===
-
-
-class AskRequest(BaseModel):
-    question: str
-    code: str
-    history_id: Optional[str] = None
-    reset: Optional[bool] = False
-
-class RepoRequest(BaseModel):
-    repo_url: str
-    branch: str 
-    request_id: str
-
-class FileGraphRequest(BaseModel):
-    file_path: str
-    file_ast: Dict[str, Any]
-    repo_url: str
-    branch: str
-
-class VerifyRequest(BaseModel):
-    repo_url: str
-    branch: str
+logger = get_logger(__name__)
 
 
 async def get_current_user_from_header(authorization: Optional[str] = Header(None)):
@@ -79,18 +61,59 @@ async def get_current_user_from_header(authorization: Optional[str] = Header(Non
 
 @router.get("/api/progress")
 async def progress(request:Request ,request_id: str):
+    print(f"[DEBUG] /api/progress called with request_id: {request_id}")
+    
     async def event_generator():
+        print(f"[DEBUG] Starting SSE stream for request_id: {request_id}")
         last_message = None
+        no_change_count = 0
+        max_no_change = 240  # 60 seconds of no change before timeout (increased for large repos)
+        iteration = 0
+        
         while True:
+            iteration += 1
             if await request.is_disconnected(): 
-                break  # ✅ client closed browser tab or stream
-            progress = progress_data.get(request_id, "Waiting...")
-            if progress == "done":
-                break  # ✅ Exit the loop when done
-            if progress != last_message:
-                yield f"data: {progress}\n\n"
-                last_message = progress
-                await asyncio.sleep(1)
+                print(f"[DEBUG] Client disconnected for request_id: {request_id}")
+                break
+            
+            # Try to get detailed progress from progress_data first
+            progress_msg = progress_data.get(request_id)
+            
+            # Fallback to Celery task state if no detailed progress
+            if not progress_msg:
+                task = celery_app.AsyncResult(request_id)
+                
+                if iteration % 10 == 0:  # Log every 5 seconds
+                    print(f"[DEBUG] Task state: {task.state} (iteration {iteration})")
+                
+                if task.state == 'PROGRESS':
+                    progress_msg = task.info.get('status', 'Processing...')
+                elif task.state == 'SUCCESS':
+                    progress_msg = 'done'
+                elif task.state == 'FAILURE':
+                    progress_msg = f'Error: {str(task.info)}'
+                else:
+                    progress_msg = 'Waiting...'
+            
+            if progress_msg != last_message:
+                no_change_count = 0
+                print(f"[DEBUG] Sending progress: {progress_msg}")
+                if progress_msg == 'done':
+                    print(f"[DEBUG] Analysis done, closing SSE stream for request_id: {request_id}")
+                    yield "event: done\ndata: Analysis complete\n\n"
+                    break
+                else:
+                    yield f"data: {progress_msg}\n\n"
+                last_message = progress_msg
+            else:
+                no_change_count += 1
+                if no_change_count > max_no_change:
+                    # Send a heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+            
+            await asyncio.sleep(0.1)  # Reduced from 0.5s to catch more updates
+        
+        print(f"[DEBUG] SSE stream closed for request_id: {request_id}")
 
     return StreamingResponse(
         event_generator(),
@@ -133,109 +156,120 @@ async def verify_repo_branch(req: VerifyRequest):
 async def get_ast(
     req: RepoRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
     """
-    Analyze a GitHub repository and return AST and git analysis.
-    
-    **Rate Limited**: 5 requests per minute per IP address
-    
-    Optional user authentication via Authorization header (Bearer token)
-    allows saving analysis history to user's account.
-    
-    Args:
-        req: RepoRequest with repo_url, branch, request_id
-        request: FastAPI request object (for rate limiting)
-        background_tasks: Background task queue
-        authorization: Optional Bearer token for authentication
-        db: Database session
-    
-    Returns:
-        Dictionary with repo_analysis and git_analysis, plus optional user history save
+    Analyze a GitHub repository asynchronously using Celery.
     """
     request_id = req.request_id
     user_id: Optional[int] = None
     
     try:
+        print(f"[DEBUG] /api/analyze called with request_id: {request_id}, repo: {req.repo_url}, branch: {req.branch}")
+        logger.info(f"[DEBUG] /api/analyze called with request_id: {request_id}")
+        
         # Extract user from Authorization header if provided
         if authorization:
             token_data = await get_current_user_from_header(authorization)
             if token_data:
                 user_id = token_data.user_id
-                print(f"Analysis requested by user: {token_data.email}")
+                logger.info(f"Analysis requested by user: {token_data.email}")
         
-        progress_data[request_id] = "Initializing scan..."
+        print(f"[DEBUG] Queuing analysis task for {req.repo_url}")
+        logger.info(f"Queuing analysis task for {req.repo_url}")
         
-        # Run parsing and git analysis concurrently
-        ast_task = asyncio.create_task(
-            run_in_threadpool(parse_code, req.repo_url, req.branch, request_id)
+        # Queue the analysis task
+        task = celery_app.send_task(
+            'analyze_repository',
+            args=[req.repo_url, req.branch, request_id],
+            task_id=request_id
         )
-        progress_data[request_id] = "Analysing git history..."
-        git_metadata_task = asyncio.create_task(
-            run_in_threadpool(get_repo_git_analysis, req.repo_url, req.branch, request_id)
-        )
         
-        progress_data[request_id] = "Putting the final pieces. Hope it was worth the wait (it probably wasn't)."
-        ast, git_metadata = await asyncio.gather(ast_task, git_metadata_task)
-        progress_data[request_id] = "done"
-
-        # Save analysis to database if user is authenticated
-        if user_id:
-            try:
-                # Check if repo analysis already exists
-                repo_analysis = db.query(RepoAnalysis).filter(
-                    RepoAnalysis.repo_url == req.repo_url,
-                    RepoAnalysis.branch == req.branch
-                ).first()
-                
-                if not repo_analysis:
-                    # Create new repo analysis record
-                    repo_analysis = RepoAnalysis(
-                        repo_url=req.repo_url,
-                        branch=req.branch,
-                        repo_analysis=ast,
-                        git_analysis=git_metadata
-                    )
-                    db.add(repo_analysis)
-                    db.commit()
-                    db.refresh(repo_analysis)
-                else:
-                    # Update existing record
-                    repo_analysis.repo_analysis = ast
-                    repo_analysis.git_analysis = git_metadata
-                    db.commit()
-                
-                # Create user analysis history record
-                analysis_history = UserAnalysisHistory(
-                    user_id=user_id,
-                    repo_analysis_id=repo_analysis.id
-                )
-                db.add(analysis_history)
-                db.commit()
-                
-                print(f"Analysis saved to user history for user_id: {user_id}")
-                
-            except Exception as e:
-                print(f"Warning: Could not save analysis to database: {e}")
-                # Don't fail the request if database save fails
+        print(f"[DEBUG] Analysis task queued with task_id: {request_id}, task state: {task.state}")
+        logger.info(f"Analysis task queued with task_id: {request_id}")
         
         return {
-            "repo_analysis": ast,
-            "git_analysis": git_metadata,
-            "saved_to_history": user_id is not None
+            "task_id": request_id,
+            "status": "queued",
+            "message": "Analysis task has been queued and will be processed shortly."
+        }
+        
+    except Exception as e:
+        print(f"[DEBUG] Error queuing analysis task: {e}")
+        logger.error(f"Error queuing analysis task: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "task_id": request_id
         }
 
-    except Exception as e:
-        traceback.print_exc()
-        progress_data[request_id] = f"error: {str(e)}"
-        return {"error": str(e)}
 
-    finally:
-        # Cleanup progress data after request completes
-        if request_id in progress_data:
-            del progress_data[request_id]
+@router.get("/api/analyze/status/{task_id}")
+async def get_analysis_status(
+    task_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the status of a repository analysis task.
+    
+    Args:
+        task_id: The task ID returned from /api/analyze
+        db: Database session
+    
+    Returns:
+        Dictionary with task status and results (if completed)
+    """
+    try:
+        print(f"[DEBUG] /api/analyze/status called for task_id: {task_id}")
+        task = celery_app.AsyncResult(task_id)
+        print(f"[DEBUG] Task state: {task.state}")
+        
+        if task.state == 'PENDING':
+            print(f"[DEBUG] Task is still pending")
+            return {"status": "pending", "task_id": task_id}
+        
+        elif task.state == 'PROGRESS':
+            print(f"[DEBUG] Task is in progress: {task.info}")
+            return {
+                "status": "in-progress",
+                "task_id": task_id,
+                "progress": task.info.get('status', 'Processing...')
+            }
+        
+        elif task.state == 'SUCCESS':
+            print(f"[DEBUG] Task completed successfully")
+            result = task.result
+            print(f"[DEBUG] Result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
+            
+            return {
+                "status": "completed",
+                "task_id": task_id,
+                "result": result
+            }
+        
+        elif task.state == 'FAILURE':
+            print(f"[DEBUG] Task failed: {task.info}")
+            return {
+                "status": "failed",
+                "task_id": task_id,
+                "error": str(task.info)
+            }
+        
+        else:
+            print(f"[DEBUG] Task in unknown state: {task.state}")
+            return {
+                "status": task.state.lower(),
+                "task_id": task_id
+            }
+    
+    except Exception as e:
+        print(f"[DEBUG] Error in /api/analyze/status: {e}")
+        logger.error(f"Error getting task status: {e}")
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "error": str(e)
+        }
 
 
 
@@ -349,7 +383,7 @@ async def update_history_notes(
 
 
 @router.post("/api/ask")
-async def ask_route(req: AskRequest):
+async def ask_route(req: AskRequest, db: Session = Depends(get_db)):
     """
     AI-powered code assistant endpoint with Redis-backed chat history.
     
@@ -357,9 +391,11 @@ async def ask_route(req: AskRequest):
     - Maintains conversation context across requests via Redis
     - 1-hour TTL for chat sessions (auto-cleanup)
     - Optional history reset for starting fresh conversations
+    - Semantic search for relevant code snippets (if repo_analysis_id provided)
     
     Args:
-        req: AskRequest with question, code, history_id, and reset flag
+        req: AskRequest with question, code, history_id, reset flag, and optional repo_analysis_id
+        db: Database session
     
     Returns:
         Dictionary with answer, history_id, and optional error

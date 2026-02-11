@@ -3,9 +3,9 @@ Authentication API routes for user signup, login, and token management.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
-from src.database import get_db
-from src.models import User
-from src.auth import (
+from src.core.database import get_db
+from src.models.database import User
+from src.core.security import (
     UserCreate,
     UserLogin,
     Token,
@@ -142,7 +142,7 @@ async def get_current_user(token: str = None, db: Session = Depends(get_db)):
         User information
     """
     from fastapi import Header
-    from src.auth import verify_token
+    from src.core.security import verify_token
     
     if not token:
         raise HTTPException(

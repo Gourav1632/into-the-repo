@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
+  # PostgreSQL Database with pgvector extension
   db:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: into_the_repo_db
     environment:
       POSTGRES_USER: ${DB_USER:-repo_user}
@@ -57,6 +57,27 @@ services:
     volumes:
       - ./backend:/app
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - app_network
+
+  # Celery Worker for async tasks
+  worker:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    container_name: into_the_repo_worker
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-repo_user}:${DB_PASSWORD:-repo_password}@db:5432/${DB_NAME:-into_the_repo}
+      REDIS_URL: redis://cache:6379/0
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A src.tasks.worker worker --loglevel=info
     networks:
       - app_network
 

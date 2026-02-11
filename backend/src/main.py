@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.api import analysis
 from src.api import auth_routes
-from src.database import init_db
-from src.rate_limiter import init_limiter
-from src.logger import get_logger
+from src.core.database import init_db
+from src.middleware.rate_limiter import init_limiter
+from src.core.logging import get_logger
 import os
 
 logger = get_logger(__name__)

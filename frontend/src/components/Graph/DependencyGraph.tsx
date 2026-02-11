@@ -3,7 +3,6 @@ import { ReactFlow, Controls } from "@xyflow/react";
 import type { Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { getLayoutedGraph } from "@/components/Graph/Layout";
-import { getComplexityColor, getComplexityBgColor } from "@/lib/complexityColors";
 import { FileAnalysis } from "@/types/file_analysis_type";
 import {
   ASTFileData,
@@ -107,15 +106,6 @@ function DependencyGraph({
     return null; // Fallback for unmatched cases
   };
 
-  const getNodeComplexity = (nodeId: string, ast: ASTFileData): number | null => {
-    const match = findMatchingDetail(nodeId, ast);
-    if (!match) return null;
-    if ("metadata" in match && typeof match.metadata?.complexity === "number") {
-      return match.metadata.complexity;
-    }
-    return null;
-  };
-
   const handleNodeClick = async (event: React.MouseEvent, node: FlowNode) => {
     event.preventDefault();
     event.stopPropagation();
@@ -129,25 +119,6 @@ function DependencyGraph({
   };
   const proOptions = { hideAttribution: true };
 
-  const styledNodes = nodes.map((node) => {
-    const complexity = getNodeComplexity(node.id, fileAST);
-    if (complexity === null) return node;
-
-    const color = getComplexityColor(complexity);
-    const background = getComplexityBgColor(complexity);
-
-    return {
-      ...node,
-      style: {
-        ...(node.style || {}),
-        border: `2px solid ${color}`,
-        backgroundColor: background,
-        borderRadius: '8px',
-        boxShadow: `0 2px 8px ${color}40`,
-      }
-    };
-  });
-
   return (
     <div className="h-full w-full">
       <AnimatePresence>
@@ -160,7 +131,7 @@ function DependencyGraph({
           style={{ height: "100%", width: "100%" }}
         >
           <ReactFlow
-            defaultNodes={styledNodes}
+            defaultNodes={nodes}
             defaultEdges={edges}
             fitView
             proOptions={proOptions}
