@@ -1,7 +1,7 @@
 'use client';
 
 import { GridBackground } from '@/components/GridBackground';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import { motion } from 'framer-motion';
 import { Analysis } from '@/types/repo_analysis_type';
 import {
@@ -20,7 +20,8 @@ import axios from 'axios';
 import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
 import Loading from '@/components/Loading';
 import Link from 'next/link';
-function Analyze() {
+
+function AnalyzeContent() {
     const searchParams = useSearchParams();
     const [analysis, setAnalysis] = useState<Analysis | null>(null);
     const [loading, setLoading] = useState(true);
@@ -190,6 +191,14 @@ function Step({
         <p className="text-neutral-300 text-sm">{description}</p>
       </div>
     </div>
+  );
+}
+
+function Analyze() {
+  return (
+    <Suspense fallback={<Loading message="Loading analysis..." />}>
+      <AnalyzeContent />
+    </Suspense>
   );
 }
 
