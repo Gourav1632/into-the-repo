@@ -139,6 +139,11 @@ dump.rdb
 *.log
 docker-compose.override.yml
 
+# Deployment
+deployment-credentials.txt
+*.pem
+private_key.pem
+
 # TypeScript
 *.tsbuildinfo
 
