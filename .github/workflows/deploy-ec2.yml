@@ -81,16 +81,16 @@ jobs:
           sleep 10
           
           for i in {1..20}; do
-            if curl -f http://${{ secrets.EC2_HOST }}:8000/docs > /dev/null 2>&1; then
-              echo "✅ Backend is healthy!"
+            if curl -f http://${{ secrets.EC2_HOST }}/health > /dev/null 2>&1; then
+              echo "✅ Application is healthy!"
               exit 0
             fi
-            echo "Attempt $i/20: Waiting for backend to be ready..."
+            echo "Attempt $i/20: Waiting for application to be ready..."
             sleep 3
           done
           
           echo "⚠️ Health check timeout - services may still be starting"
-          echo "Check deployment status manually at: http://${{ secrets.EC2_HOST }}:8000/docs"
+          echo "Check deployment status manually at: http://${{ secrets.EC2_HOST }}"
 
       - name: Deployment Summary
         if: always()
@@ -104,6 +104,6 @@ jobs:
           echo "Author: ${{ github.actor }}"
           echo ""
           echo "🌐 Access your application:"
-          echo "Frontend: http://${{ secrets.EC2_HOST }}:3000"
-          echo "Backend API: http://${{ secrets.EC2_HOST }}:8000/docs"
+          echo "Application: http://${{ secrets.EC2_HOST }}"
+          echo "API Docs: http://${{ secrets.EC2_HOST }}/docs"
           echo "================================"

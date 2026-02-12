@@ -64,8 +64,8 @@ FRONTEND_PORT=3000
 LOG_LEVEL=info
 NODE_ENV=production
 
-# Frontend API URL
-NEXT_PUBLIC_API_URL=http://${EC2_IP}:8000
+# Frontend API URL (using Nginx reverse proxy)
+NEXT_PUBLIC_API_URL=/api
 EOF
 
 echo "✅ Created .env file"
@@ -75,8 +75,8 @@ echo ""
 echo "📋 Configuration Summary:"
 echo "-------------------------"
 echo "EC2 IP: ${EC2_IP}"
-echo "Frontend URL: http://${EC2_IP}:3000"
-echo "Backend API URL: http://${EC2_IP}:8000"
+echo "Application URL: http://${EC2_IP}"
+echo "API Docs: http://${EC2_IP}/docs"
 echo "Database Password: ${DB_PASSWORD}"
 echo "Secret Key: ${SECRET_KEY:0:20}..."
 echo ""
@@ -91,8 +91,8 @@ EC2 Public IP: ${EC2_IP}
 Database Password: ${DB_PASSWORD}
 Secret Key: ${SECRET_KEY}
 
-Frontend: http://${EC2_IP}:3000
-Backend API: http://${EC2_IP}:8000/docs
+Application: http://${EC2_IP}
+API Docs: http://${EC2_IP}/docs
 
 IMPORTANT: Keep this file secure and delete after saving credentials elsewhere!
 EOF
@@ -134,8 +134,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "✅ Deployment complete!"
     echo ""
     echo "🌐 Access your application:"
-    echo "   Frontend: http://${EC2_IP}:3000"
-    echo "   Backend API: http://${EC2_IP}:8000/docs"
+    echo "   Application: http://${EC2_IP}"
+    echo "   API Docs: http://${EC2_IP}/docs"
     echo ""
     echo "📝 View logs: docker compose logs -f"
     echo "🔄 Restart: docker compose restart"
