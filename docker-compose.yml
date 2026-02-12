@@ -10,6 +10,8 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-repo_password}
       POSTGRES_DB: ${DB_NAME:-into_the_repo}
       PGDATA: /var/lib/postgresql/data/pgdata
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     ports:
       - "5432:5432"
     volumes:
@@ -22,9 +24,6 @@ services:
     restart: always
     networks:
       - app_network
-    environment:
-      LC_ALL: C.UTF-8
-      LANG: C.UTF-8
 
   # Redis Cache & Celery Broker
   redis:
