@@ -1,22 +1,11 @@
 #!/bin/bash
-# EC2 Initial Setup Script
-# Run this on your EC2 instance after cloning the repository
+# Initial EC2 setup script for backend deployment using pre-built images
 
 set -e
 
-echo "🚀 Into the Repo - EC2 Initial Setup"
-echo "======================================"
+echo "🚀 Into the Repo - Backend EC2 Setup"
+echo "======================================="
 echo ""
-
-# Check if running on EC2
-if [ ! -f /sys/hypervisor/uuid ] && [ ! -d /sys/devices/virtual/dmi/id/ ]; then
-    echo "⚠️  Warning: This doesn't appear to be an EC2 instance"
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
 
 # Auto-detect EC2 Public IP
 echo "Detecting EC2 Public IP..."
@@ -24,11 +13,11 @@ EC2_IP=$(curl -s http://checkip.amazonaws.com || curl -s ifconfig.me || echo "lo
 echo "✓ Detected IP: ${EC2_IP}"
 echo ""
 
-# Prompt for API keys
+# Prompt for credentials
 echo "Please provide the following values:"
 echo ""
 
-read -p "Enter your GitHub Personal Access Token: " GITHUB_TOKEN
+read -p "Enter your GitHub Personal Access Token (with packages:read permission): " GITHUB_TOKEN
 read -p "Enter your Gemini API Key: " GEMINI_API_KEY
 
 # Generate secure passwords
@@ -65,12 +54,8 @@ GEMINI_API_KEY=${GEMINI_API_KEY}
 
 # Application Configuration
 BACKEND_PORT=8000
-FRONTEND_PORT=3000
 LOG_LEVEL=info
 NODE_ENV=production
-
-# Frontend API URL (using Nginx reverse proxy)
-NEXT_PUBLIC_API_URL=/api
 EOF
 
 echo "✅ Created .env file"
@@ -80,13 +65,12 @@ echo ""
 echo "📋 Configuration Summary:"
 echo "-------------------------"
 echo "EC2 IP: ${EC2_IP}"
-echo "Application URL: http://${EC2_IP}"
-echo "API Docs: http://${EC2_IP}/docs"
+echo "Backend API: http://${EC2_IP}/docs"
 echo "Database Password: ${DB_PASSWORD}"
 echo "Secret Key: ${SECRET_KEY:0:20}..."
 echo ""
 
-# Save credentials to a secure file
+# Save credentials
 cat > ~/deployment-credentials.txt << EOF
 Into the Repo - Deployment Credentials
 ======================================
@@ -96,8 +80,10 @@ EC2 Public IP: ${EC2_IP}
 Database Password: ${DB_PASSWORD}
 Secret Key: ${SECRET_KEY}
 
-Application: http://${EC2_IP}
-API Docs: http://${EC2_IP}/docs
+Backend API: http://${EC2_IP}/docs
+
+Deploy frontend on Vercel with:
+NEXT_PUBLIC_API_URL=http://${EC2_IP}
 
 IMPORTANT: Keep this file secure and delete after saving credentials elsewhere!
 EOF
@@ -108,23 +94,31 @@ echo "⚠️  IMPORTANT: Save these credentials securely, then delete the file!"
 echo ""
 
 # Ask to deploy
-read -p "Start initial deployment now? (y/n) " -n 1 -r
+read -p "Start deployment now? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
-    echo "🔨 Starting Docker build and deployment..."
-    echo "This may take 10-15 minutes..."
+    echo "🚀 Starting deployment..."
     echo ""
     
-    # Build images
-    docker compose build --no-cache
+    # Use backend-only compose
+    ln -sf docker-compose.backend.yml docker-compose.yml
+    
+    # Login to GitHub Container Registry
+    echo "🔐 Logging into GitHub Container Registry..."
+    echo "${GITHUB_TOKEN}" | docker login ghcr.io -u gourav1632 --password-stdin
+    
+    # Pull images (much faster than building!)
+    echo "📦 Pulling Docker images from GitHub Container Registry..."
+    docker compose pull
     
     # Start services
+    echo "▶️  Starting services..."
     docker compose up -d
     
     echo ""
     echo "⏳ Waiting for services to start..."
-    sleep 30
+    sleep 20
     
     # Show status
     echo ""
@@ -138,17 +132,21 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
     echo "✅ Deployment complete!"
     echo ""
-    echo "🌐 Access your application:"
-    echo "   Application: http://${EC2_IP}"
+    echo "🌐 Access your backend:"
     echo "   API Docs: http://${EC2_IP}/docs"
     echo ""
     echo "📝 View logs: docker compose logs -f"
     echo "🔄 Restart: docker compose restart"
     echo "🛑 Stop: docker compose down"
+    echo ""
+    echo "🎨 Deploy frontend on Vercel:"
+    echo "   Set NEXT_PUBLIC_API_URL=http://${EC2_IP}"
 else
     echo ""
-    echo "Deployment skipped. To deploy manually later, run:"
-    echo "  docker compose build"
+    echo "Deployment skipped. To deploy manually later:"
+    echo "  ln -sf docker-compose.backend.yml docker-compose.yml"
+    echo "  echo 'YOUR_TOKEN' | docker login ghcr.io -u gourav1632 --password-stdin"
+    echo "  docker compose pull"
     echo "  docker compose up -d"
 fi
 

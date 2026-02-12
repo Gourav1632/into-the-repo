@@ -1,7 +1,10 @@
-name: Deploy to AWS EC2
+name: Deploy Backend to AWS EC2
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
     branches: [ main ]
   workflow_dispatch:
 
@@ -9,6 +12,7 @@ jobs:
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
     steps:
       - name: Checkout code
@@ -40,17 +44,25 @@ jobs:
             echo "📥 Pulling latest code from GitHub..."
             git pull origin main
             
+            # Use backend-only compose file
+            echo "🔗 Using backend-only docker-compose..."
+            ln -sf docker-compose.backend.yml docker-compose.yml
+            
+            # Login to GitHub Container Registry
+            echo "🔐 Logging into GitHub Container Registry..."
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
             # Stop existing containers
             echo "🛑 Stopping existing services..."
             docker compose down || true
             
             # Remove old images to free space
             echo "🧹 Cleaning up old Docker images..."
-            docker system prune -af --volumes || true
+            docker system prune -af || true
             
-            # Build Docker images
-            echo "🔨 Building Docker images..."
-            docker compose build --no-cache
+            # Pull latest images from GHCR
+            echo "📦 Pulling latest Docker images from GitHub Container Registry..."
+            docker compose pull
             
             # Start services
             echo "▶️  Starting services..."
@@ -82,15 +94,15 @@ jobs:
           
           for i in {1..20}; do
             if curl -f http://${{ secrets.EC2_HOST }}/health > /dev/null 2>&1; then
-              echo "✅ Application is healthy!"
+              echo "✅ Backend is healthy!"
               exit 0
             fi
-            echo "Attempt $i/20: Waiting for application to be ready..."
+            echo "Attempt $i/20: Waiting for backend to be ready..."
             sleep 3
           done
           
           echo "⚠️ Health check timeout - services may still be starting"
-          echo "Check deployment status manually at: http://${{ secrets.EC2_HOST }}"
+          echo "Check deployment status manually at: http://${{ secrets.EC2_HOST }}/docs"
 
       - name: Deployment Summary
         if: always()
@@ -104,6 +116,8 @@ jobs:
           echo "Author: ${{ github.actor }}"
           echo ""
           echo "🌐 Access your application:"
-          echo "Application: http://${{ secrets.EC2_HOST }}"
-          echo "API Docs: http://${{ secrets.EC2_HOST }}/docs"
+          echo "Backend API: http://${{ secrets.EC2_HOST }}/docs"
+          echo "Frontend: Deploy separately on Vercel"
+          echo "================================"
+
           echo "================================"

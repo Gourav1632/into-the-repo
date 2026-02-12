@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database with pgvector extension (for future embeddings)
+  # PostgreSQL Database with pgvector extension
   db:
     image: pgvector/pgvector:pg16
     container_name: into_the_repo_db
@@ -47,10 +47,7 @@ services:
 
   # FastAPI Backend API Server
   backend:
-    build:
-      context: ./backend
-      dockerfile: dockerfile
-      target: production
+    image: ghcr.io/gourav1632/into-the-repo/backend:latest
     container_name: into_the_repo_backend
     environment:
       # Database
@@ -59,7 +56,7 @@ services:
       # Redis
       REDIS_URL: redis://redis:6379/0
       
-      # Authentication (MUST be changed in production)
+      # Authentication
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 10080
@@ -67,6 +64,9 @@ services:
       # External APIs
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      
+      # CORS - Allow Vercel frontend
+      FRONTEND_HOST: ${FRONTEND_HOST:-*}
       
       # App Configuration
       PYTHONUNBUFFERED: 1
@@ -93,10 +93,7 @@ services:
 
   # Celery Worker for Async Repository Analysis
   celery_worker:
-    build:
-      context: ./backend
-      dockerfile: dockerfile
-      target: production
+    image: ghcr.io/gourav1632/into-the-repo/backend:latest
     container_name: into_the_repo_celery_worker
     environment:
       # Database
@@ -132,31 +129,6 @@ services:
     networks:
       - app_network
 
-  # Next.js Frontend Application
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
-    container_name: into_the_repo_frontend
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api}
-      NODE_ENV: production
-    expose:
-      - "3000"
-    depends_on:
-      - backend
-    restart: always
-    networks:
-      - app_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
   # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
@@ -166,7 +138,6 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - frontend
       - backend
     restart: always
     networks:
@@ -190,4 +161,3 @@ volumes:
 networks:
   app_network:
     driver: bridge
-
