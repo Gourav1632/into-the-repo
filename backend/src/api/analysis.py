@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Header, Depends
+from fastapi import APIRouter, BackgroundTasks, Header, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 from fastapi.concurrency import run_in_threadpool
@@ -10,7 +10,7 @@ from src.services.analysis.per_file_graph_builder import build_per_file_graph, b
 from src.services.analysis.summarizer import analyze_code
 from src.services.utilities.git_utils import get_repo_git_analysis, is_repo_private, branch_exists, clone_repo_shallow
 from src.services.ai.ask_ai import askAI, reset_chat_history
-from src.core.security import verify_token
+from src.core.security import verify_token, require_auth, TokenData
 from src.core.database import get_db
 from src.models.database import RepoAnalysis, UserAnalysisHistory
 from src.middleware.rate_limiter import limiter
@@ -48,12 +48,9 @@ async def get_current_user_from_header(authorization: Optional[str] = Header(Non
         token = authorization[7:]
         token_data = verify_token(token)
         
-        if token_data is None:
-            return None
-        
-        return token_data
+        return token_data if token_data else None
     except Exception as e:
-        print(f"Error extracting user from token: {e}")
+        logger.warning(f"Error extracting user from token: {e}")
         return None
 
 
@@ -61,19 +58,16 @@ async def get_current_user_from_header(authorization: Optional[str] = Header(Non
 
 @router.get("/api/progress")
 async def progress(request:Request ,request_id: str):
-    print(f"[DEBUG] /api/progress called with request_id: {request_id}")
+    logger.info(f"SSE connection opened for request_id: {request_id}")
     
     async def event_generator():
-        print(f"[DEBUG] Starting SSE stream for request_id: {request_id}")
         last_message = None
         no_change_count = 0
-        max_no_change = 240  # 60 seconds of no change before timeout (increased for large repos)
-        iteration = 0
+        max_no_change = 240  # 60 seconds of no change before timeout
         
         while True:
-            iteration += 1
-            if await request.is_disconnected(): 
-                print(f"[DEBUG] Client disconnected for request_id: {request_id}")
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected for request_id: {request_id}")
                 break
             
             # Try to get detailed progress from progress_data first
@@ -82,9 +76,6 @@ async def progress(request:Request ,request_id: str):
             # Fallback to Celery task state if no detailed progress
             if not progress_msg:
                 task = celery_app.AsyncResult(request_id)
-                
-                if iteration % 10 == 0:  # Log every 5 seconds
-                    print(f"[DEBUG] Task state: {task.state} (iteration {iteration})")
                 
                 if task.state == 'PROGRESS':
                     progress_msg = task.info.get('status', 'Processing...')
@@ -97,9 +88,8 @@ async def progress(request:Request ,request_id: str):
             
             if progress_msg != last_message:
                 no_change_count = 0
-                print(f"[DEBUG] Sending progress: {progress_msg}")
                 if progress_msg == 'done':
-                    print(f"[DEBUG] Analysis done, closing SSE stream for request_id: {request_id}")
+                    logger.info(f"Analysis completed for request_id: {request_id}")
                     yield "event: done\ndata: Analysis complete\n\n"
                     break
                 else:
@@ -111,9 +101,9 @@ async def progress(request:Request ,request_id: str):
                     # Send a heartbeat to keep connection alive
                     yield ": heartbeat\n\n"
             
-            await asyncio.sleep(0.1)  # Reduced from 0.5s to catch more updates
+            await asyncio.sleep(0.1)
         
-        print(f"[DEBUG] SSE stream closed for request_id: {request_id}")
+        logger.info(f"SSE stream closed for request_id: {request_id}")
 
     return StreamingResponse(
         event_generator(),
@@ -166,28 +156,23 @@ async def get_ast(
     user_id: Optional[int] = None
     
     try:
-        print(f"[DEBUG] /api/analyze called with request_id: {request_id}, repo: {req.repo_url}, branch: {req.branch}")
-        logger.info(f"[DEBUG] /api/analyze called with request_id: {request_id}")
+        logger.info(f"Analysis request: repo={req.repo_url}, branch={req.branch}, request_id={request_id}")
         
         # Extract user from Authorization header if provided
         if authorization:
             token_data = await get_current_user_from_header(authorization)
             if token_data:
                 user_id = token_data.user_id
-                logger.info(f"Analysis requested by user: {token_data.email}")
+                logger.info(f"Analysis requested by user: {token_data.email} (user_id={user_id})")
         
-        print(f"[DEBUG] Queuing analysis task for {req.repo_url}")
-        logger.info(f"Queuing analysis task for {req.repo_url}")
-        
-        # Queue the analysis task
+        # Queue the analysis task (pass user_id for history tracking)
         task = celery_app.send_task(
             'analyze_repository',
-            args=[req.repo_url, req.branch, request_id],
+            args=[req.repo_url, req.branch, request_id, user_id],
             task_id=request_id
         )
         
-        print(f"[DEBUG] Analysis task queued with task_id: {request_id}, task state: {task.state}")
-        logger.info(f"Analysis task queued with task_id: {request_id}")
+        logger.info(f"Analysis task queued: task_id={request_id}, user_id={user_id}")
         
         return {
             "task_id": request_id,
@@ -196,7 +181,6 @@ async def get_ast(
         }
         
     except Exception as e:
-        print(f"[DEBUG] Error queuing analysis task: {e}")
         logger.error(f"Error queuing analysis task: {e}", exc_info=True)
         return {
             "error": str(e),
@@ -220,16 +204,12 @@ async def get_analysis_status(
         Dictionary with task status and results (if completed)
     """
     try:
-        print(f"[DEBUG] /api/analyze/status called for task_id: {task_id}")
         task = celery_app.AsyncResult(task_id)
-        print(f"[DEBUG] Task state: {task.state}")
         
         if task.state == 'PENDING':
-            print(f"[DEBUG] Task is still pending")
             return {"status": "pending", "task_id": task_id}
         
         elif task.state == 'PROGRESS':
-            print(f"[DEBUG] Task is in progress: {task.info}")
             return {
                 "status": "in-progress",
                 "task_id": task_id,
@@ -237,9 +217,8 @@ async def get_analysis_status(
             }
         
         elif task.state == 'SUCCESS':
-            print(f"[DEBUG] Task completed successfully")
             result = task.result
-            print(f"[DEBUG] Result type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"Task {task_id} completed successfully")
             
             return {
                 "status": "completed",
@@ -248,7 +227,7 @@ async def get_analysis_status(
             }
         
         elif task.state == 'FAILURE':
-            print(f"[DEBUG] Task failed: {task.info}")
+            logger.error(f"Task {task_id} failed: {task.info}")
             return {
                 "status": "failed",
                 "task_id": task_id,
@@ -256,15 +235,13 @@ async def get_analysis_status(
             }
         
         else:
-            print(f"[DEBUG] Task in unknown state: {task.state}")
             return {
                 "status": task.state.lower(),
                 "task_id": task_id
             }
     
     except Exception as e:
-        print(f"[DEBUG] Error in /api/analyze/status: {e}")
-        logger.error(f"Error getting task status: {e}")
+        logger.error(f"Error getting task status for {task_id}: {e}")
         return {
             "status": "error",
             "task_id": task_id,
@@ -274,12 +251,21 @@ async def get_analysis_status(
 
 
 @router.post("/api/file")
-async def generate_file_graph(req: FileGraphRequest):
-    print("Request for file graph...")
+async def generate_file_graph(
+    req: FileGraphRequest,
+    authorization: Optional[str] = Header(None)
+):
+    # Check if user is authenticated
+    is_authenticated = False
+    if authorization:
+        token_data = await get_current_user_from_header(authorization)
+        if token_data:
+            is_authenticated = True
+            logger.info(f"File analysis with AI requested by: {token_data.email}")
 
     file_graph_task = asyncio.create_task(run_in_threadpool(build_per_file_graph, req.file_path, req.file_ast))
     call_graph_task = asyncio.create_task(run_in_threadpool(build_call_graph, req.file_ast))
-    analysis_task = asyncio.create_task(run_in_threadpool(analyze_code, req.repo_url, req.branch, req.file_path))
+    analysis_task = asyncio.create_task(run_in_threadpool(analyze_code, req.repo_url, req.branch, req.file_path, is_authenticated))
 
     file_graph, call_graph, analysis = await asyncio.gather(file_graph_task, call_graph_task, analysis_task)
 
@@ -291,57 +277,95 @@ async def generate_file_graph(req: FileGraphRequest):
     }
 
 
+@router.get("/api/analysis/{repo_analysis_id}")
+async def get_analysis_by_id(
+    repo_analysis_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieve a specific repository analysis by ID.
+    This is useful for loading past analyses from user history.
+    
+    Args:
+        repo_analysis_id: ID of the RepoAnalysis record
+        db: Database session
+    
+    Returns:
+        Dictionary with repo_analysis and git_analysis data
+    """
+    try:
+        analysis = db.query(RepoAnalysis).filter(
+            RepoAnalysis.id == repo_analysis_id
+        ).first()
+        
+        if not analysis:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+        
+        return {
+            "id": analysis.id,
+            "repo_url": analysis.repo_url,
+            "branch": analysis.branch,
+            "repo_analysis": analysis.repo_analysis,
+            "git_analysis": analysis.git_analysis,
+            "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
+            "updated_at": analysis.updated_at.isoformat() if analysis.updated_at else None
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/user/history")
 async def get_user_history(
-    authorization: Optional[str] = Header(None),
+    user: TokenData = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """
     Get analysis history for the authenticated user.
     
     Args:
-        authorization: Bearer token for authentication
+        user: Authenticated user data from token
         db: Database session
     
     Returns:
         List of analysis history records with repository and analysis details
     """
-    if not authorization:
-        return {"error": "Authorization required"}
-    
-    token_data = await get_current_user_from_header(authorization)
-    if not token_data:
-        return {"error": "Invalid or expired token"}
-    
     try:
+        logger.info(f"Fetching history for user: {user.email} (user_id={user.user_id})")
         history_records = db.query(UserAnalysisHistory).filter(
-            UserAnalysisHistory.user_id == token_data.user_id
+            UserAnalysisHistory.user_id == user.user_id
         ).order_by(UserAnalysisHistory.analyzed_at.desc()).all()
+        
+        logger.info(f"Found {len(history_records)} history records for user {user.user_id}")
         
         history_list = []
         for record in history_records:
             repo_analysis = record.repo_analysis
-            history_list.append({
+            history_entry = {
                 "id": record.id,
                 "repo_url": repo_analysis.repo_url,
                 "branch": repo_analysis.branch,
                 "analyzed_at": record.analyzed_at.isoformat() if record.analyzed_at else None,
                 "notes": record.notes,
                 "repo_analysis_id": repo_analysis.id
-            })
+            }
+            history_list.append(history_entry)
         
         return {"history": history_list}
     
     except Exception as e:
-        print(f"Error retrieving user history: {e}")
-        return {"error": str(e)}
+        logger.error(f"Error retrieving user history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/user/history/notes")
 async def update_history_notes(
     history_id: int,
     notes: str,
-    authorization: Optional[str] = Header(None),
+    user: TokenData = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """
@@ -350,42 +374,42 @@ async def update_history_notes(
     Args:
         history_id: ID of the history record
         notes: New notes to save
-        authorization: Bearer token for authentication
+        user: Authenticated user data from token
         db: Database session
     
     Returns:
         Success/error message
     """
-    if not authorization:
-        return {"error": "Authorization required"}
-    
-    token_data = await get_current_user_from_header(authorization)
-    if not token_data:
-        return {"error": "Invalid or expired token"}
-    
     try:
         history = db.query(UserAnalysisHistory).filter(
             UserAnalysisHistory.id == history_id,
-            UserAnalysisHistory.user_id == token_data.user_id
+            UserAnalysisHistory.user_id == user.user_id
         ).first()
         
         if not history:
-            return {"error": "History record not found"}
+            raise HTTPException(status_code=404, detail="History record not found")
         
         history.notes = notes
         db.commit()
         
         return {"message": "Notes updated successfully"}
     
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error updating notes: {e}")
-        return {"error": str(e)}
+        logger.error(f"Error updating notes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/api/ask")
-async def ask_route(req: AskRequest, db: Session = Depends(get_db)):
+async def ask_route(
+    req: AskRequest,
+    user: TokenData = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """
-    AI-powered code assistant endpoint with Redis-backed chat history.
+    AI-powered code assistant endpoint (REQUIRES AUTHENTICATION).
+    Only logged-in users can access AI assistant features.
     
     Features:
     - Maintains conversation context across requests via Redis
@@ -395,16 +419,17 @@ async def ask_route(req: AskRequest, db: Session = Depends(get_db)):
     
     Args:
         req: AskRequest with question, code, history_id, reset flag, and optional repo_analysis_id
+        user: Authenticated user data from token
         db: Database session
     
     Returns:
         Dictionary with answer, history_id, and optional error
     """
-    print("Requesting AI help...")
-    history_id = req.history_id or f"{req.question[:20]}-{hash(req.code)}"
+    logger.info(f"AI assistant request from user: {user.email}")
+    history_id = req.history_id or f"{user.user_id}-{req.question[:20]}-{hash(req.code)}"
 
     if req.reset:
-        print(f"History reset requested for history_id: {history_id}")
+        logger.info(f"History reset requested for user {user.user_id}")
         reset_chat_history(history_id)
         return {"message": "Conversation history reset. Start fresh!"}
 

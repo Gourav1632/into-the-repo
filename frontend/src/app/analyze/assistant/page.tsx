@@ -11,6 +11,7 @@ import {motion} from "framer-motion"
 import { FileAnalysis } from '@/types/file_analysis_type';
 import FileSelector from '@/components/FileAnalysis/FileSelector';
 import { getItem, setItem } from '@/utils/indexedDB';
+import { getAuthHeaders, isAuthenticated } from '@/utils/auth';
 
 function Assistant() {
   const [currentFile, setCurrentFile] = useState<string>('Choose a file to ask the assistant.');
@@ -67,6 +68,20 @@ useEffect(() => {
   const handleSubmit = async () => {
     if (!input.trim()) return;
 
+    // Check if user is authenticated
+    if (!isAuthenticated()) {
+      setChat(prev => [
+        ...prev,
+        { role: 'user', content: input },
+        {
+          role: 'assistant',
+          content: 'AI Assistant is only available to logged-in users. Please sign up or log in to use this feature.',
+        },
+      ]);
+      setInput('');
+      return;
+    }
+
     const userMessage = { role: 'user', content: input };
     setChat(prev => [...prev, userMessage]);
     setInput('');
@@ -78,6 +93,8 @@ useEffect(() => {
         code: code,
         history_id: historyID,
         reset: false,
+      }, {
+        headers: getAuthHeaders()
       });
 
       const data = res.data;
@@ -95,13 +112,16 @@ useEffect(() => {
       };
 
       setChat(prev => [...prev, assistantMessage]);
-    } catch (err) {
+    } catch (err: any) {
       console.log(err)
+      const errorMessage = err.response?.status === 401 
+        ? 'Your session has expired. Please log in again to continue using AI features.'
+        : 'Sorry, something went wrong. Please try again.';
       setChat(prev => [
         ...prev,
         {
           role: 'assistant',
-          content: 'Sorry, something went wrong. Please try again.',
+          content: errorMessage,
         },
       ]);
     } finally {

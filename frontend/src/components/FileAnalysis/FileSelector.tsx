@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { fileAnalysisRoute } from '@/utils/APIRoutes';
+import { fileAnalysisRoute, getAnalysisByIdRoute } from '@/utils/APIRoutes';
 import { Analysis } from '@/types/repo_analysis_type';
 import { askAssistantRoute } from '@/utils/APIRoutes';
 import { getItem, removeItem, setItem } from '@/utils/indexedDB';
 import { FileAnalysis } from '@/types/file_analysis_type';
+import { getAuthHeaders } from '@/utils/auth';
 
 const FileSelector = ({
   selectedFile,
@@ -20,18 +21,35 @@ const FileSelector = ({
   const [currentSelectedFile, setCurrentSelectedFile] = useState(selectedFile);
 
   useEffect(() => {
-    async function fetchAnalysis(){
-    const analysis = await getItem<Analysis>('repoAnalysis');
-    if (analysis) {
-      setAnalysis(analysis);
-    }
+    async function fetchAnalysis() {
+      // Get repo_analysis_id from session
+      const repoAnalysisId = sessionStorage.getItem('currentRepoAnalysisId');
+      if (!repoAnalysisId) {
+        console.error("[FILE-SELECTOR] No repo_analysis_id in session");
+        return;
+      }
 
-    const files = await getItem<string[]>('fileList');
-    if (files) {
-      setFileList(files);
+      try {
+        // Fetch analysis from API
+        const response = await axios.get(getAnalysisByIdRoute(parseInt(repoAnalysisId)));
+        const analysisData: Analysis = {
+          repo_url: response.data.repo_url,
+          branch: response.data.branch,
+          repo_analysis: response.data.repo_analysis,
+          git_analysis: response.data.git_analysis
+        };
+        setAnalysis(analysisData);
+
+        // Get file list from IndexedDB (UI state)
+        const files = await getItem<string[]>('fileList');
+        if (files) {
+          setFileList(files);
+        }
+      } catch (err) {
+        console.error("[FILE-SELECTOR] Error fetching analysis:", err);
+      }
     }
-  }
-  fetchAnalysis();
+    fetchAnalysis();
   }, []);
 
   const handleFileClick = async (file: string) => {
@@ -72,6 +90,8 @@ const FileSelector = ({
           file_ast,
           repo_url: analysis.repo_url,
           branch: analysis.branch,
+        }, {
+          headers: getAuthHeaders()
         });
     } catch (e) {
             console.error(`Error fetching ${file} data: ${e}`);
@@ -90,7 +110,7 @@ const FileSelector = ({
   };
 
   return (
-    <div className="relative z-30 font-semibold w-full max-w-[800px] text-left">
+    <div className="relative z-30 font-semibold w-full max-w-200 text-left">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="bg-[#121212] text-white text-xl lg:text-3xl px-4 py-2 rounded-xl break-all"

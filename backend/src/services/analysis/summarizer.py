@@ -27,9 +27,19 @@ def get_code_from_file(repo_url: str, branch: str, relative_path: str) -> str:
     code = download_file(owner, repo, github_path, branch)
     return code
 
-def analyze_code(repo_url: str, branch: str, relative_path: str) -> Dict[str, str]:
+def analyze_code(repo_url: str, branch: str, relative_path: str, is_authenticated: bool = False) -> Dict[str, str]:
     language = detect_file_language(relative_path)
     code = get_code_from_file(repo_url, branch, relative_path)
+    
+    # If user is not authenticated, return auth-required message
+    if not is_authenticated:
+        return {
+            "summary": "AI-powered summaries are only available to logged-in users. Sign up or log in to unlock AI features including detailed file summaries and step-by-step tutorials!",
+            "tutorial": [],
+            "code": code,
+            "language": language,
+            "auth_required": True
+        }
 
     prompt = (
         "You are a code analysis assistant. Given a single code file, return a JSON object with two fields: \"summary\" and \"tutorial\".\n\n"

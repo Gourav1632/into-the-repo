@@ -141,6 +141,44 @@ def get_repo_files_from_clone(clone_path: str, file_extensions: Optional[list] =
         logger.error(f"Error extracting files from clone: {e}")
         return files_dict
 
+
+def get_latest_commit_sha(repo_url: str, branch: str) -> Optional[str]:
+    """
+    Get the latest commit SHA for a repository branch without cloning.
+    Uses GitHub API to fetch the commit information.
+    
+    Args:
+        repo_url: GitHub repository URL
+        branch: Branch name
+    
+    Returns:
+        Latest commit SHA string, or None if failed
+    """
+    try:
+        owner, repo = extract_owner_repo(repo_url)
+        url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{branch}"
+        headers = {
+            "Accept": "application/vnd.github+json"
+        }
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            commit_sha = data.get("sha")
+            logger.info(f"Latest commit SHA for {repo_url}@{branch}: {commit_sha[:7] if commit_sha else 'None'}")
+            return commit_sha
+        else:
+            logger.warning(f"Failed to get latest commit SHA: Status {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"Error fetching latest commit SHA: {e}")
+        return None
+
+
 def get_repo_tree(owner, repo, branch):
     url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{branch}?recursive=1"
     headers = {

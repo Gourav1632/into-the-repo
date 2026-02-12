@@ -5,65 +5,54 @@ import axios from "axios";
 import { Spotlight } from "@/components/ui/spotlight-new";
 import { Cover } from "@/components/ui/cover";
 import { progressRoute, host } from "@/utils/APIRoutes";
-import { setItem } from "@/utils/indexedDB";
-import { Analysis } from "@/types/repo_analysis_type";
 
 export default function LoadingScreen({requestId}:{requestId:string}) {
     const [progressMessage, setProgressMessage] = useState("");
     const router = useRouter();
-    
-    console.log("[DEBUG] LoadingScreen mounted with requestId:", requestId);
 
     useEffect(() => {
     const sseUrl = `${progressRoute}?request_id=${requestId}`;
-    console.log("[DEBUG] Opening SSE connection to:", sseUrl);
-    
     const eventSource = new EventSource(sseUrl);
 
     eventSource.onmessage = (event) => {
       const message = event.data;
-      console.log("[DEBUG] SSE message received:", message);
       setProgressMessage(message);
     };
 
     eventSource.addEventListener('done', async () => {
-      console.log("[DEBUG] 'done' event received from SSE");
       eventSource.close();
       
       // Fetch the completed analysis results
       try {
         const statusUrl = `${host}/api/analyze/status/${requestId}`;
-        console.log("[DEBUG] Fetching analysis status from:", statusUrl);
-        
         const statusResponse = await axios.get(statusUrl);
-        console.log("[DEBUG] Status response:", statusResponse.data);
         
         if (statusResponse.data.status === 'completed' && statusResponse.data.result) {
-          const analysisData: Analysis = statusResponse.data.result;
-          console.log("[DEBUG] Analysis data received, saving to IndexedDB");
+          const result = statusResponse.data.result;
+          const repoAnalysisId = result.repo_analysis_id;
           
-          await setItem<Analysis>("repoAnalysis", analysisData);
-          console.log("[DEBUG] Analysis saved to IndexedDB, redirecting to /analyze");
-          
-          // Redirect after saving
-          router.push("/analyze");
+          if (repoAnalysisId) {
+            router.push(`/analyze?id=${repoAnalysisId}`);
+          } else {
+            console.error('No repo_analysis_id in response. Result:', result);
+            setProgressMessage("Analysis completed but could not retrieve ID. Please check history.");
+          }
         } else {
-          console.error('[DEBUG] Analysis failed or incomplete', statusResponse.data);
+          console.error('Analysis failed or incomplete', statusResponse.data);
           setProgressMessage("Analysis failed. Please try again.");
         }
       } catch (error) {
-        console.error('[DEBUG] Error fetching analysis results:', error);
+        console.error('Error fetching analysis results:', error);
         setProgressMessage("Error retrieving results. Please try again.");
       }
     });
 
     eventSource.onerror = () => {
-      console.error('[DEBUG] SSE connection error');
+      console.error('SSE connection error');
       eventSource.close();
     };
 
     return () => {
-      console.log("[DEBUG] LoadingScreen unmounting, closing SSE connection");
       eventSource.close();
     };
   }, [requestId, router]);

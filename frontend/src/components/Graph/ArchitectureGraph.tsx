@@ -8,7 +8,8 @@ import { getLayoutedGraph } from '@/components/Graph/Layout';
 import Loading from '../Loading';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Analysis, ASTFileData, ASTResult } from '@/types/repo_analysis_type';
-import { getItem } from '@/utils/indexedDB';
+import axios from 'axios';
+import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
 
 function ArchitectureGraph() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -33,15 +34,32 @@ function ArchitectureGraph() {
   useEffect(() => {
     setLoading(true);
     async function fetchAnalysis() {
-    const analysis = await getItem<Analysis>('repoAnalysis');
-    if (!analysis) {
-      setMessage("Architecture map not found. Please search for a repository.");
-      return;
+      // Get repo_analysis_id from session
+      const repoAnalysisId = sessionStorage.getItem('currentRepoAnalysisId');
+      if (!repoAnalysisId) {
+        setMessage("No analysis ID found. Please search for a repository.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        // Fetch analysis from API
+        const response = await axios.get(getAnalysisByIdRoute(parseInt(repoAnalysisId)));
+        const analysisData: Analysis = {
+          repo_url: response.data.repo_url,
+          branch: response.data.branch,
+          repo_analysis: response.data.repo_analysis,
+          git_analysis: response.data.git_analysis
+        };
+        setAnalysis(analysisData);
+      } catch (err) {
+        console.error("[ARCHITECTURE] Error fetching analysis:", err);
+        setMessage("Failed to load architecture map.");
+      } finally {
+        setLoading(false);
+      }
     }
-    setAnalysis(analysis);
-    setLoading(false);
-  }
-  fetchAnalysis()
+    fetchAnalysis();
   }, []);
 
   const { nodes, edges } = analysis

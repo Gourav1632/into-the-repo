@@ -9,8 +9,9 @@ import { MostChangedFiles } from '@/components/Git/MostChangedFiles';
 import { ProjectSummary } from '@/components/Git/ProjectSummary';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GitAnalysis } from '@/types/git_analysis_type';
-import { getItem } from '@/utils/indexedDB';
 import { Analysis } from '@/types/repo_analysis_type';
+import axios from 'axios';
+import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
 
 function Commits() {
   const [analysis, setAnalysis] = useState<GitAnalysis | null>(null);
@@ -18,19 +19,36 @@ function Commits() {
   const [message, setMessage] = useState("Retrieving git analysis...");
 
   useEffect(() => {
-    async function fetchGitAnalysis(){
-    setLoading(true);
-    const analysis = await getItem<Analysis>('repoAnalysis');
-    if (!analysis) {
-      setMessage("Git analysis not found.");
-      setLoading(false);
-      return;
-    }
+    async function fetchGitAnalysis() {
+      setLoading(true);
+      
+      // Get repo_analysis_id from session
+      const repoAnalysisId = sessionStorage.getItem('currentRepoAnalysisId');
+      if (!repoAnalysisId) {
+        setMessage("No analysis ID found.");
+        setLoading(false);
+        return;
+      }
 
-    setAnalysis(analysis.git_analysis);
-    setLoading(false);
-  }
-  fetchGitAnalysis()
+      try {
+        // Fetch analysis from API
+        const response = await axios.get(getAnalysisByIdRoute(parseInt(repoAnalysisId)));
+        const analysisData: Analysis = {
+          repo_url: response.data.repo_url,
+          branch: response.data.branch,
+          repo_analysis: response.data.repo_analysis,
+          git_analysis: response.data.git_analysis
+        };
+
+        setAnalysis(analysisData.git_analysis);
+      } catch (err) {
+        console.error("[COMMITS] Error fetching git analysis:", err);
+        setMessage("Failed to load git analysis.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchGitAnalysis();
   }, []);
 
   return (

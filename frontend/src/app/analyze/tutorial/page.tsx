@@ -158,8 +158,34 @@ function Tutorial() {
       </motion.div>
       </>
               ) : (
-          <div className="relative -mt-32 z-20 w-full bg-gradient-to-b h-screen flex justify-center items-center from-neutral-200 to-neutral-500 bg-clip-text py-8 text-xl font-bold text-transparent">
-            Could not generate tutorial.
+          <div className="relative -mt-32 z-20 w-full h-screen flex justify-center items-center px-6">
+            <div className="max-w-2xl text-center">
+              <h2 className="text-2xl font-bold bg-gradient-to-b from-neutral-200 to-neutral-500 bg-clip-text text-transparent mb-4">
+                {fileAnalysis?.analysis?.auth_required 
+                  ? "AI Features Locked" 
+                  : "Tutorial Not Available"}
+              </h2>
+              <p className="text-neutral-400 text-lg mb-6">
+                {fileAnalysis?.analysis?.summary || 
+                 "AI-powered tutorials are only available to logged-in users. Sign up or log in to unlock AI features including detailed file summaries and step-by-step tutorials!"}
+              </p>
+              {fileAnalysis?.analysis?.auth_required && (
+                <div className="flex gap-4 justify-center">
+                  <a 
+                    href="/login" 
+                    className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold transition-colors"
+                  >
+                    Log In
+                  </a>
+                  <a 
+                    href="/signup" 
+                    className="px-6 py-3 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg font-semibold transition-colors"
+                  >
+                    Sign Up
+                  </a>
+                </div>
+              )}
+            </div>
           </div>
         )}
     </div>

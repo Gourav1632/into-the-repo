@@ -9,44 +9,66 @@ import { FileAnalysis as file_analysis } from '@/types/file_analysis_type';
 import { Analysis as repo_analysis, ASTFileData } from '@/types/repo_analysis_type';
 import FileSelector from '@/components/FileAnalysis/FileSelector';
 import { getItem } from '@/utils/indexedDB';
+import axios from 'axios';
+import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
 
 function FileAnalysis() {
   const [fileAnalysis, setFileAnalysis] = useState<file_analysis | null>(null);
   const [currentFile, setCurrentFile] = useState<string>("Choose a file to view its analysis.");
   const [AST, setAST] = useState<ASTFileData | null>(null);
+  const [analysis, setAnalysis] = useState<repo_analysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [showCodeViewer, setShowCodeViewer] = useState(false);
 
   useEffect(() => {
-    async function fetchFileAnalysis(){
-    const file = await getItem<string>("lastUsedFile");
-    if (!file) {
-      setLoading(false);
-      return;
-    }
+    async function fetchFileAnalysis() {
+      // Get repo_analysis_id from session
+      const repoAnalysisId = sessionStorage.getItem('currentRepoAnalysisId');
+      if (!repoAnalysisId) {
+        console.error("[FILE-ANALYSIS] No repo_analysis_id in session");
+        setLoading(false);
+        return;
+      }
 
-    const analysis = await getItem<repo_analysis>("repoAnalysis");
-    if (file && analysis) {
-      const astForFile = analysis?.repo_analysis?.ast?.[file];
+      try {
+        // Fetch analysis from API
+        const response = await axios.get(getAnalysisByIdRoute(parseInt(repoAnalysisId)));
+        const analysisData: repo_analysis = {
+          repo_url: response.data.repo_url,
+          branch: response.data.branch,
+          repo_analysis: response.data.repo_analysis,
+          git_analysis: response.data.git_analysis
+        };
+        setAnalysis(analysisData);
 
-      setCurrentFile(file);
-      if (astForFile) {
-        setAST(astForFile);
-      } else {
-        console.warn("AST not found for file:", file);
+        // Get last used file from IndexedDB (UI state)
+        const file = await getItem<string>("lastUsedFile");
+        if (!file) {
+          setLoading(false);
+          return;
+        }
+
+        const astForFile = analysisData?.repo_analysis?.ast?.[file];
+        setCurrentFile(file);
+        if (astForFile) {
+          setAST(astForFile);
+        } else {
+          console.warn("AST not found for file:", file);
+        }
+
+        // Check if we have cached file analysis (on-demand AI analysis)
+        const storageKey = `fileAnalysis-${file}`;
+        const file_analysis = await getItem<file_analysis>(storageKey);
+        if (file_analysis) {
+          setFileAnalysis(file_analysis);
+        }
+      } catch (err) {
+        console.error("[FILE-ANALYSIS] Error fetching analysis:", err);
+      } finally {
+        setLoading(false);
       }
     }
-
-    const storageKey = `fileAnalysis-${file}`;
-    const file_analysis = await getItem<file_analysis>(storageKey);
-
-    if (file_analysis) {
-      setFileAnalysis(file_analysis);
-    }
-
-    setLoading(false);
-  }
-  fetchFileAnalysis();
+    fetchFileAnalysis();
   }, []);
 
   if (loading) return <div><Loading message={"Retrieving file analysis..."} /></div>;

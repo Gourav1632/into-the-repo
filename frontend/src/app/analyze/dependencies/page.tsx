@@ -8,6 +8,8 @@ import { FileAnalysis } from '@/types/file_analysis_type';
 import FileSelector from '@/components/FileAnalysis/FileSelector';
 import { Analysis, ASTFileData } from '@/types/repo_analysis_type';
 import { getItem } from '@/utils/indexedDB';
+import axios from 'axios';
+import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
 
 
 function DependencyPage() {
@@ -18,30 +20,47 @@ function DependencyPage() {
 
 
   useEffect(() => {
-    async function fetchDependencyGraph(){
-    const file = await getItem<string>('lastUsedFile');
-    const analysis = await getItem<Analysis>('repoAnalysis');
+    async function fetchDependencyGraph() {
+      // Get repo_analysis_id from session
+      const repoAnalysisId = sessionStorage.getItem('currentRepoAnalysisId');
+      if (!repoAnalysisId) {
+        setLoading(false);
+        return;
+      }
 
-    if(!analysis){
-      setLoading(false)
-      return;
-    }
-    if (!file) {
-      setLoading(false);
-      return;
-    }
-    setFileAST(analysis.repo_analysis.ast[file])
+      try {
+        // Fetch analysis from API
+        const response = await axios.get(getAnalysisByIdRoute(parseInt(repoAnalysisId)));
+        const analysisData: Analysis = {
+          repo_url: response.data.repo_url,
+          branch: response.data.branch,
+          repo_analysis: response.data.repo_analysis,
+          git_analysis: response.data.git_analysis
+        };
 
-    setCurrentFile(file); // also stores for display
-    const storageKey = `fileAnalysis-${file}`;
-    const file_analysis = await getItem<FileAnalysis>(storageKey);
+        // Get last used file from IndexedDB (UI state)
+        const file = await getItem<string>('lastUsedFile');
+        if (!file) {
+          setLoading(false);
+          return;
+        }
 
-    if (file_analysis) {
-      setFileAnalysis(file_analysis);
+        setFileAST(analysisData.repo_analysis.ast[file]);
+        setCurrentFile(file);
+
+        // Check for cached file analysis
+        const storageKey = `fileAnalysis-${file}`;
+        const file_analysis = await getItem<FileAnalysis>(storageKey);
+        if (file_analysis) {
+          setFileAnalysis(file_analysis);
+        }
+      } catch (err) {
+        console.error("[DEPENDENCIES] Error fetching analysis:", err);
+      } finally {
+        setLoading(false);
+      }
     }
-    setLoading(false);
-  }
-  fetchDependencyGraph();
+    fetchDependencyGraph();
   }, []);
 
 

@@ -7,6 +7,9 @@ from src.middleware.rate_limiter import init_limiter
 from src.core.logging import get_logger
 import os
 
+# Import models so SQLAlchemy can create tables
+from src.models import database as models
+
 logger = get_logger(__name__)
 
 FRONTEND_HOST = os.getenv("FRONTEND_HOST")

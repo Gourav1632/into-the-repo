@@ -4,15 +4,17 @@ Authentication API routes for user signup, login, and token management.
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from src.core.database import get_db
-from src.models.database import User
+from src.models.database import User, UserAnalysisHistory, RepoAnalysis
 from src.core.security import (
     UserCreate,
     UserLogin,
     Token,
+    TokenData,
     hash_password,
     verify_password,
     create_access_token,
-    get_token_expiry_seconds
+    get_token_expiry_seconds,
+    require_auth
 )
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -133,7 +135,10 @@ async def login(req: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-async def get_current_user(token: str = None, db: Session = Depends(get_db)):
+async def get_current_user(
+    user: TokenData = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
     """
     Get current authenticated user information.
     Requires Authorization header with Bearer token.
@@ -141,37 +146,51 @@ async def get_current_user(token: str = None, db: Session = Depends(get_db)):
     Returns:
         User information
     """
-    from fastapi import Header
-    from src.core.security import verify_token
-    
-    if not token:
-        raise HTTPException(
-            status_code=401,
-            detail="Token required"
-        )
-    
-    # Remove "Bearer " prefix if present
-    if token.startswith("Bearer "):
-        token = token[7:]
-    
-    token_data = verify_token(token)
-    if not token_data:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired token"
-        )
-    
-    user = db.query(User).filter(User.id == token_data.user_id).first()
-    if not user:
+    db_user = db.query(User).filter(User.id == user.user_id).first()
+    if not db_user:
         raise HTTPException(
             status_code=404,
             detail="User not found"
         )
     
     return {
-        "id": user.id,
-        "email": user.email,
-        "username": user.username,
-        "is_active": user.is_active,
-        "created_at": user.created_at
+        "id": db_user.id,
+        "email": db_user.email,
+        "username": db_user.username,
+        "is_active": db_user.is_active,
+        "created_at": db_user.created_at
     }
+
+
+@router.get("/history")
+async def get_user_history(
+    user: TokenData = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's analysis history.
+    Returns list of repositories analyzed by the user.
+    
+    Returns:
+        List of analysis history entries with repo details
+    """
+    history = (
+        db.query(UserAnalysisHistory)
+        .filter(UserAnalysisHistory.user_id == user.user_id)
+        .order_by(UserAnalysisHistory.analyzed_at.desc())
+        .all()
+    )
+    
+    result = []
+    for entry in history:
+        repo = db.query(RepoAnalysis).filter(RepoAnalysis.id == entry.repo_analysis_id).first()
+        if repo:
+            result.append({
+                "id": entry.id,
+                "repo_url": repo.repo_url,
+                "branch": repo.branch,
+                "analyzed_at": entry.analyzed_at,
+                "notes": entry.notes
+            })
+    
+    return result

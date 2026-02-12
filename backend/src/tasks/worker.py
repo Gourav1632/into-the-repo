@@ -10,13 +10,14 @@ import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 from celery import Celery
-from src.services.utilities.git_utils import clone_repo_shallow, get_repo_git_analysis
+from src.services.utilities.git_utils import clone_repo_shallow, get_repo_git_analysis, get_latest_commit_sha
 from src.services.analysis.ast_parser import parse_code
 
 from src.core.logging import get_logger
 from src.core.database import SessionLocal
-from src.models.database import RepoAnalysis
+from src.models.database import RepoAnalysis, UserAnalysisHistory
 from src.shared.progress import progress_data
+from typing import Optional
 
 logger = get_logger(__name__)
 
@@ -49,7 +50,7 @@ app.conf.update(
 
 
 @app.task(name='analyze_repository', bind=True)
-def analyze_repository(self, repo_url: str, branch: str, request_id: str):
+def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_id: Optional[int] = None):
     """
     Analyze a GitHub repository asynchronously.
     
@@ -58,12 +59,14 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str):
     2. Parses the code to extract AST
     3. Analyzes git history
     4. Saves results to database
-    5. Returns the combined analysis
+    5. Saves to user history if user_id provided
+    6. Returns the combined analysis
     
     Args:
         repo_url: GitHub repository URL
         branch: Branch to analyze
         request_id: Request ID for tracking progress
+        user_id: Optional user ID for saving to history
     
     Returns:
         Dictionary with repo_analysis and git_analysis
@@ -74,90 +77,129 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str):
     try:
         self.update_state(state='PROGRESS', meta={'status': 'Cloning repository...'})
         progress_data[request_id] = 'Initializing scan...'
-        print(f"[DEBUG] Worker starting: repo={repo_url}, branch={branch}, request_id={request_id}")
         logger.info(f"Starting analysis task for {repo_url} (request_id: {request_id})")
         
-        # Clone repository
-        print(f"[DEBUG] Cloning repository...")
-        local_repo_path = clone_repo_shallow(repo_url, branch)
-        print(f"[DEBUG] Repository cloned to: {local_repo_path}")
-        logger.info(f"Cloned {repo_url} to {local_repo_path}")
+        # First, get the latest commit SHA to check if we need to re-analyze
+        latest_commit_sha = get_latest_commit_sha(repo_url, branch)
+        logger.info(f"Latest commit SHA: {latest_commit_sha[:7] if latest_commit_sha else 'None'}")
         
-        # Parse code
-        print(f"[DEBUG] Starting code parsing...")
-        repo_analysis = parse_code(local_repo_path, repo_url, branch, request_id)
-        print(f"[DEBUG] Code parsing complete, found {len(repo_analysis)} files")
+        # Check if we already have analysis for this exact commit
+        repo_analysis_id = None
+        existing_analysis = None
         
-        progress_data[request_id] = 'Analysing git history...'
-        self.update_state(state='PROGRESS', meta={'status': 'Analyzing git history...'})
-        logger.info(f"Parsed code for {repo_url}")
-        
-        # Get git analysis
-        print(f"[DEBUG] Starting git analysis...")
-        git_analysis = get_repo_git_analysis(local_repo_path, repo_url, branch, request_id)
-        print(f"[DEBUG] Git analysis complete")
-        logger.info(f"Completed analysis for {repo_url}")
-        
-        # Save to database
-        try:
-            # Check if repo analysis already exists
-            existing = db.query(RepoAnalysis).filter(
+        if latest_commit_sha:
+            existing_analysis = db.query(RepoAnalysis).filter(
                 RepoAnalysis.repo_url == repo_url,
-                RepoAnalysis.branch == branch
+                RepoAnalysis.branch == branch,
+                RepoAnalysis.last_commit_sha == latest_commit_sha
             ).first()
             
-            if not existing:
-                # Create new repo analysis record
-                analysis_record = RepoAnalysis(
-                    repo_url=repo_url,
-                    branch=branch,
-                    repo_analysis=repo_analysis,
-                    git_analysis=git_analysis
+            if existing_analysis:
+                repo_analysis_id = existing_analysis.id
+                repo_analysis = existing_analysis.repo_analysis
+                git_analysis = existing_analysis.git_analysis
+                logger.info(f"Using cached analysis for {repo_url} at commit {latest_commit_sha[:7]}")
+        
+        # If no cached analysis, or no commit SHA, do full analysis
+        if not existing_analysis:
+            logger.info("No cached analysis found, performing full analysis")
+            
+            # Clone repository
+            local_repo_path = clone_repo_shallow(repo_url, branch)
+            logger.info(f"Cloned {repo_url} to {local_repo_path}")
+            
+            # Parse code
+            repo_analysis = parse_code(local_repo_path, repo_url, branch, request_id)
+            logger.info(f"Code parsing complete, found {len(repo_analysis)} files")
+            
+            progress_data[request_id] = 'Analysing git history...'
+            self.update_state(state='PROGRESS', meta={'status': 'Analyzing git history...'})
+            
+            # Get git analysis
+            git_analysis = get_repo_git_analysis(local_repo_path, repo_url, branch, request_id)
+            logger.info(f"Completed analysis for {repo_url}")
+        
+            # Save to database with commit SHA
+            try:
+                # Check if we need to create or update
+                existing_any = db.query(RepoAnalysis).filter(
+                    RepoAnalysis.repo_url == repo_url,
+                    RepoAnalysis.branch == branch
+                ).first()
+                
+                if not existing_any:
+                    # Create new repo analysis record
+                    analysis_record = RepoAnalysis(
+                        repo_url=repo_url,
+                        branch=branch,
+                        last_commit_sha=latest_commit_sha,
+                        repo_analysis=repo_analysis,
+                        git_analysis=git_analysis
+                    )
+                    db.add(analysis_record)
+                    db.commit()
+                    db.refresh(analysis_record)
+                    repo_analysis_id = analysis_record.id
+                    logger.info(f"Created new repo analysis with id={repo_analysis_id}")
+                else:
+                    # Update existing record with new commit data
+                    existing_any.last_commit_sha = latest_commit_sha
+                    existing_any.repo_analysis = repo_analysis
+                    existing_any.git_analysis = git_analysis
+                    from datetime import datetime
+                    existing_any.updated_at = datetime.now()
+                    db.commit()
+                    repo_analysis_id = existing_any.id
+                    logger.info(f"Updated repo analysis id={repo_analysis_id} with new commit")
+            
+            except Exception as e:
+                logger.error(f"Failed to save analysis to database: {e}")
+                db.rollback()
+        
+        # Always create history entry for user (audit trail - regardless of whether analysis was cached or new)
+        if user_id and repo_analysis_id:
+            try:
+                from src.models.database import UserAnalysisHistory
+                
+                # Always create a new history entry for each analysis attempt
+                history_record = UserAnalysisHistory(
+                    user_id=user_id,
+                    repo_analysis_id=repo_analysis_id
                 )
-                db.add(analysis_record)
+                db.add(history_record)
                 db.commit()
-                db.refresh(analysis_record)
-                repo_analysis_id = analysis_record.id
-            else:
-                # Update existing record
-                existing.repo_analysis = repo_analysis
-                existing.git_analysis = git_analysis
-                db.commit()
-                repo_analysis_id = existing.id
-            
-            logger.info(f"Analysis saved to database for {repo_url}")
-            
-        except Exception as e:
-            logger.error(f"Failed to save analysis to database: {e}")
-            db.rollback()
+                logger.info(f"Created history entry: user={user_id}, analysis={repo_analysis_id}, commit={latest_commit_sha[:7] if latest_commit_sha else 'None'}")
+            except Exception as e:
+                logger.error(f"Failed to save history entry: {e}")
+                db.rollback()
+        
+        # Verify repo_analysis_id was obtained
+        if repo_analysis_id is None:
+            logger.error("repo_analysis_id is None - database save may have failed")
         
         # Mark progress as done before returning
         progress_data[request_id] = "Putting the final pieces. Hope it was worth the wait (it probably wasn't)."
-        logger.info(f"Analysis completed for {repo_url}")
         
         # Small delay to ensure client sees final message
         import time
         time.sleep(0.5)
         
         progress_data[request_id] = "done"
+        logger.info(f"Analysis completed for {repo_url}, returning id={repo_analysis_id}")
         
-        # Log the structure of what we're returning
-        print(f"[DEBUG] Returning analysis with repo_analysis keys: {repo_analysis.keys() if isinstance(repo_analysis, dict) else 'not a dict'}")
-        print(f"[DEBUG] Returning analysis with git_analysis type: {type(git_analysis)}")
-        
-        # Return the combined analysis
+        # Return the combined analysis with database ID
         return {
             'repo_analysis': repo_analysis,
             'git_analysis': git_analysis,
             'repo_url': repo_url,
             'branch': branch,
-            'request_id': request_id
+            'request_id': request_id,
+            'repo_analysis_id': repo_analysis_id
         }
         
     except Exception as e:
-        print(f"[DEBUG] Error analyzing repository {repo_url}: {e}")
         logger.error(f"Error analyzing repository {repo_url}: {e}", exc_info=True)
-        progress_data[request_id] = f"❌ Error: {str(e)}"
+        progress_data[request_id] = f"Error: {str(e)}"
         self.update_state(
             state='FAILURE',
             meta={'error': str(e)}
@@ -168,15 +210,12 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str):
         # Cleanup temporary repository
         if local_repo_path and os.path.exists(local_repo_path):
             try:
-                print(f"[DEBUG] Cleaning up temp repo at: {local_repo_path}")
                 shutil.rmtree(local_repo_path)
                 logger.info(f"Cleaned up temporary repository: {local_repo_path}")
-                print(f"[DEBUG] Temp repo cleaned up")
             except Exception as e:
                 logger.warning(f"Failed to cleanup temp repo at {local_repo_path}: {e}")
         
         # Close database session
-        print(f"[DEBUG] Closing database session")
         db.close()
         
         # Clean up progress data after a delay to ensure client gets final message

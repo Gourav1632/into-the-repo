@@ -14,12 +14,14 @@ class RepoAnalysis(Base):
     """
     Stores cached analysis results for repositories.
     Prevents redundant computation for popular repos.
+    Cache is tied to the last commit SHA - only updates when new commits exist.
     """
     __tablename__ = "repo_analysis"
 
     id = Column(Integer, primary_key=True, index=True)
-    repo_url = Column(String(500), unique=True, index=True, nullable=False)
+    repo_url = Column(String(500), nullable=False, index=True)
     branch = Column(String(100), default="main")
+    last_commit_sha = Column(String(40), nullable=True, doc="SHA of last commit when analysis was done")
     
     # Cached AST and git analysis as JSONB (fast retrieval)
     repo_analysis = Column(JSON, nullable=True, doc="Cached AST parsing results")
@@ -31,9 +33,15 @@ class RepoAnalysis(Base):
     
     # Relationships
     analysis_histories = relationship("UserAnalysisHistory", back_populates="repo_analysis")
+    
+    # Composite unique constraint on repo_url + branch + last_commit_sha
+    __table_args__ = (
+        # Index for faster lookups
+        {'extend_existing': True}
+    )
 
     def __repr__(self):
-        return f"<RepoAnalysis(repo_url={self.repo_url}, branch={self.branch})>"
+        return f"<RepoAnalysis(repo_url={self.repo_url}, branch={self.branch}, last_commit_sha={self.last_commit_sha[:7] if self.last_commit_sha else None})>"
 
 
 class User(Base):

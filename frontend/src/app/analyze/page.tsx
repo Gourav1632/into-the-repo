@@ -1,9 +1,9 @@
 'use client';
 
 import { GridBackground } from '@/components/GridBackground';
-import React,{useEffect} from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Analysis, ASTResult } from '@/types/repo_analysis_type';
+import { Analysis } from '@/types/repo_analysis_type';
 import {
   IconGitBranch,
   IconFileAnalytics,
@@ -14,49 +14,80 @@ import {
   IconRouteSquare2,
   IconHome,
 } from "@tabler/icons-react"; 
-import { getItem, setItem } from '@/utils/indexedDB';
-
+import { setItem } from '@/utils/indexedDB';
+import { useSearchParams } from 'next/navigation';
+import axios from 'axios';
+import { getAnalysisByIdRoute } from '@/utils/APIRoutes';
+import Loading from '@/components/Loading';
+import Link from 'next/link';
 function Analyze() {
+    const searchParams = useSearchParams();
+    const [analysis, setAnalysis] = useState<Analysis | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string>('');
 
-
-    useEffect( () => {
-      const setFileList = async ()=>{
-        console.log("[DEBUG] Analyze page useEffect: fetching repoAnalysis from IndexedDB");
-        const analysis = await getItem<Analysis>("repoAnalysis")
-        console.log("[DEBUG] Fetched analysis from IndexedDB:", analysis);
+    useEffect(() => {
+      const fetchAnalysis = async () => {
+        const idParam = searchParams.get('id');
         
-        if (!analysis || !analysis.repo_analysis) {
-          console.log("[DEBUG] No analysis data found, exiting early");
+        if (!idParam) {
+          setError("No analysis ID provided");
+          setLoading(false);
           return;
         }
-        
-        console.log("[DEBUG] repo_analysis structure:", analysis.repo_analysis);
-        console.log("[DEBUG] repo_analysis keys:", Object.keys(analysis.repo_analysis));
-    
+
+        const repoAnalysisId = parseInt(idParam);
+
+        // Store ID for other pages to use
+        sessionStorage.setItem('currentRepoAnalysisId', idParam);
+
         try {
-          console.log("[DEBUG] Extracting file names from analysis");
-          console.log("[DEBUG] repo_analysis.ast:", analysis.repo_analysis.ast);
-          console.log("[DEBUG] typeof ast:", typeof analysis.repo_analysis.ast);
-          console.log("[DEBUG] ast keys:", Object.keys(analysis.repo_analysis.ast || {}));
-          
-          const files = extractFileNames(analysis.repo_analysis.ast);
-          console.log("[DEBUG] Extracted files:", files);
-          
-          await setItem<string[]>("fileList",files)
-          console.log("[DEBUG] File list saved to IndexedDB");
-        } catch (error) {
-          console.error('[DEBUG] Failed to parse repoAnalysis:', error);
+          const response = await axios.get(getAnalysisByIdRoute(repoAnalysisId));
+
+          const analysisData: Analysis = {
+            repo_url: response.data.repo_url,
+            branch: response.data.branch,
+            repo_analysis: response.data.repo_analysis,
+            git_analysis: response.data.git_analysis
+          };
+
+          setAnalysis(analysisData);
+
+          // Extract and store file list for UI navigation
+          if (analysisData.repo_analysis?.ast) {
+            const files = Object.keys(analysisData.repo_analysis.ast);
+            await setItem<string[]>("fileList", files);
+          }
+        } catch (err) {
+          console.error("Error fetching analysis:", err);
+          setError("Failed to load analysis");
+        } finally {
+          setLoading(false);
         }
-      }
-      setFileList();
-    }, []);
-  
-    const extractFileNames = (ast: ASTResult): string[] => {
-      if (ast) {
-        return Object.keys(ast);
-      }
-      return [];
-    };
+      };
+
+      fetchAnalysis();
+    }, [searchParams]);
+
+    if (loading) {
+      return <Loading message="Loading analysis..." />;
+    }
+
+    if (error) {
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center">
+          <GridBackground />
+          <div className="text-white text-center">
+            <p className="text-xl mb-4">{error}</p>
+            <Link href="/" className="text-purple-400 underline">Go back home</Link>
+          </div>
+        </div>
+      );
+    }
+
+    if (!analysis) {
+      return null;
+    }
 
 const tabs = [
   {

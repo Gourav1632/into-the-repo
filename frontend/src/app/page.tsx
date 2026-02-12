@@ -3,6 +3,7 @@ import React,{useState} from "react";
 import { Spotlight } from "@/components/ui/spotlight-new";
 import { Form } from "@/components/Form";
 import LoadingScreen from "@/components/LoadingScreen";
+import { UserMenu } from "@/components/UserMenu";
 
 
 
@@ -17,8 +18,14 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen w-full  justify-center items-center rounded-md flex md:items-center md:justify-center bg-black/96 antialiased bg-grid-white/[0.02] relative overflow-hidden">
+    <div className="h-screen w-full  justify-center items-center  flex md:items-center md:justify-center bg-black/96 antialiased bg-grid-white/[0.02] relative overflow-hidden">
       <Spotlight />
+      
+      {/* User Menu - Top Right */}
+      <div className="absolute top-6 right-6 z-50">
+        <UserMenu />
+      </div>
+
       <div className="flex flex-col justify-center items-center gap-4 p-4 max-w-7xl  mx-auto relative z-10  w-full">
         <h1 className="text-5xl md:text-7xl font-bold text-center bg-clip-text text-transparent bg-linear-to-b from-neutral-50 to-neutral-400 bg-opacity-50">
           Into the <span className="relative bg-clip-text text-transparent bg-no-repeat bg-linear-to-r from-purple-500 via-violet-500 to-pink-500 py-4">repo</span>

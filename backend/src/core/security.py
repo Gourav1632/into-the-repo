@@ -1,16 +1,17 @@
 """
 Authentication and security module for JWT token handling and password management.
-Uses passlib for secure password hashing and python-jose for JWT tokens.
+Uses bcrypt for secure password hashing and python-jose for JWT tokens.
 """
 import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from pathlib import Path
 
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from fastapi import HTTPException, Header
 
 # Load environment variables
 env_path = Path(__file__).resolve().parents[2] / ".env"
@@ -20,9 +21,6 @@ load_dotenv(dotenv_path=env_path)
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-12345")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ===== Pydantic Schemas =====
@@ -66,7 +64,11 @@ def hash_password(password: str) -> str:
     Returns:
         Hashed password string
     """
-    return pwd_context.hash(password)
+    # Encode password to bytes, hash it, and return as string
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -80,7 +82,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches, False otherwise
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    password_bytes = plain_password.encode('utf-8')
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 
 # ===== JWT Token Handling =====
@@ -140,3 +144,47 @@ def verify_token(token: str) -> Optional[TokenData]:
 def get_token_expiry_seconds() -> int:
     """Get token expiry time in seconds."""
     return ACCESS_TOKEN_EXPIRE_MINUTES * 60
+
+
+def require_auth(authorization: str = Header(...)) -> TokenData:
+    """
+    Dependency that requires valid authentication.
+    Raises 401 if token is missing or invalid.
+    
+    Usage:
+        @router.post("/api/endpoint")
+        async def endpoint(user: TokenData = Depends(require_auth)):
+            # user.user_id, user.email, user.username available
+            ...
+    
+    Args:
+        authorization: Authorization header (Bearer token)
+    
+    Returns:
+        TokenData with user information
+    
+    Raises:
+        HTTPException: 401 if token is missing or invalid
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required"
+        )
+    
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization header format"
+        )
+    
+    token = authorization[7:]
+    token_data = verify_token(token)
+    
+    if not token_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired token"
+        )
+    
+    return token_data

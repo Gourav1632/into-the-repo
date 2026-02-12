@@ -1,27 +1,77 @@
-FROM python:3.11-slim
+# Multi-stage build for optimized production image
+FROM python:3.11-slim as base
 
-# Set the working directory
+# Set environment variables for optimal Python execution
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install system dependencies required for building packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Install required system packages
-RUN apt-get update && apt-get install -y gcc git && rm -rf /var/lib/apt/lists/*
+# Development stage - includes development dependencies and source mounts
+FROM base as development
 
-# Create a non-root user for security
-RUN useradd -m -u 1000 appuser
-
-# Copy and install Python dependencies
+# Copy and install all dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source code
-COPY src/ ./src/
+# Copy application code
+COPY . .
 
-# Change ownership of the app directory to appuser
-RUN chown -R appuser:appuser /app
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
 
-# Switch to non-root user
 USER appuser
 
-# Run the application using Uvicorn
+# Run in development mode with auto-reload
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# Production stage - optimized for size and security
+FROM base as production
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only necessary application files (no dev files)
+COPY src/ ./src/
+
+# Create non-root user with proper permissions
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app && \
+    mkdir -p /app/logs && \
+    chown -R appuser:appuser /app/logs
+
+USER appuser
+
+# Default command (can be overridden in docker-compose)
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    mkdir -p /app/logs /tmp/repo_clone && \
+    chown -R appuser:appuser /app /tmp/repo_clone
+
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/docs || exit 1
+
+# Use gunicorn for production with uvicorn workers
+CMD ["gunicorn", "src.main:app", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--workers", "4", \
+     "--bind", "0.0.0.0:8000", \
+     "--timeout", "120", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]
+
 

@@ -11,6 +11,7 @@ import {
   IconRouteSquare2,
   IconHome,
 } from "@tabler/icons-react";
+import { UserMenu } from "@/components/UserMenu";
 
 const links = [
   {
@@ -64,6 +65,11 @@ export default function AnalyzeLayout({
 
   return (
     <div className="relative overflow-hidden min-h-screen flex flex-col bg-background text-foreground">
+      {/* User Menu - Top Right */}
+      <div className="absolute top-6 right-6 z-50">
+        <UserMenu />
+      </div>
+      
       <main className="">{children}</main>
       {/* Floating Dock at bottom center */}
       <div className="absolute z-20 bottom-10 w-full flex justify-center">

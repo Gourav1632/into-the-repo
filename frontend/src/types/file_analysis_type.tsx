@@ -36,6 +36,7 @@ export type FileAnalysis = {
     language: string;
     summary?: string;
     tutorial?: TutorialStep[];
+    auth_required?: boolean;
   };
   call_graph: Graph;
   file_graph: Graph;

@@ -1,11 +1,13 @@
 "use client";
-import React,{useState} from "react";
+import React,{useState, useEffect} from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import axios from "axios";
 import {repoAnalysisRoute, repoVerifyRoute } from "@/utils/APIRoutes";
 import { v4 as uuidv4 } from "uuid";
+import Link from "next/link";
+import { isAuthenticated, getAuthToken } from "@/utils/auth";
 
 
 type FormProps = {
@@ -17,6 +19,23 @@ type FormProps = {
 export function Form({ setParentLoading, setParentRequestId }:FormProps) {
     const [repoUrl, setRepoUrl] = useState<string>("");
     const [branch, setBranch] = useState<string>("");
+    const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+
+    useEffect(() => {
+        setIsLoggedIn(isAuthenticated());
+        
+        // Read query parameters for pre-filling form
+        const params = new URLSearchParams(window.location.search);
+        const repoParam = params.get('repo');
+        const branchParam = params.get('branch');
+        
+        if (repoParam) {
+            setRepoUrl(decodeURIComponent(repoParam));
+        }
+        if (branchParam) {
+            setBranch(decodeURIComponent(branchParam));
+        }
+    }, []);
     const [loading,setLoading] = useState<boolean>(false);
     const [analyzing, setAnalyzing] = useState<boolean>(false);
     const [errorMessage,setErrorMessage] = useState<string>("") 
@@ -25,37 +44,29 @@ export function Form({ setParentLoading, setParentRequestId }:FormProps) {
 
   const verifyRepo = async () => {
     setErrorMessage(""); // reset previous error
-    console.log("[DEBUG] Verify button clicked");
     
     if (!repoUrl || !branch) {
       setErrorMessage("Please enter both repository URL and branch.");
-      console.log("[DEBUG] Verify failed: missing URL or branch");
       return;
     }
 
-    console.log("[DEBUG] Verifying repo:", { repoUrl, branch });
     setLoading(true);
     setVerifyMessage("Verifying")
     try {
-      console.log("[DEBUG] Calling /api/verify endpoint");
       const response = await axios.post(repoVerifyRoute, {
         repo_url: repoUrl,
         branch: branch,
       });
 
-      console.log("[DEBUG] Verify response:", response.data);
-
       if (response.data.success) {
         setVerifyMessage("Verified")
         setIsVerified(true)
-        console.log("[DEBUG] Verification successful");
       } else {
         setVerifyMessage("Verify")
         setErrorMessage(response.data.error || "Verification failed.");
-        console.log("[DEBUG] Verification failed:", response.data.error);
       }
     } catch (error) {
-        console.error("[DEBUG] Verification API error:", error);
+        console.error("Verification error:", error);
         setVerifyMessage("Verify");
         setErrorMessage("Something went wrong during verification.");
     } finally {
@@ -68,40 +79,35 @@ export function Form({ setParentLoading, setParentRequestId }:FormProps) {
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setErrorMessage(""); // reset previous error
-    console.log("[DEBUG] Form submitted");
     
     if(!isVerified){
         setErrorMessage("Please verify the repository before analyzing.");
-        console.log("[DEBUG] Form not verified");
         return
     }
     const requestId = uuidv4();
-    console.log("[DEBUG] Submitting analyze request with:", { repoUrl, branch, requestId });
     
     setAnalyzing(true);
     setParentLoading(true);
     setParentRequestId(requestId)
     try{
-      console.log("[DEBUG] Calling /api/analyze endpoint");
+      const token = getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+      
       const response = await axios.post(repoAnalysisRoute, {
         repo_url:repoUrl,
         branch:branch,
         request_id: requestId,
-      });
-      
-      console.log("[DEBUG] /api/analyze response:", response.data);
+      }, { headers });
       
       if (response.data.error) {
         setErrorMessage(`Error: ${response.data.error}`);
         setAnalyzing(false);
         setParentLoading(false);
-        console.log("[DEBUG] Error from API:", response.data.error);
         return; 
       }
-      console.log("[DEBUG] Analysis queued successfully, showing loading screen");
       // Don't redirect here - let LoadingScreen handle redirecting after analysis completes
     }catch(error){
-      console.error("[DEBUG] API error:", error);
+      console.error("Analysis error:", error);
       setErrorMessage("Something went wrong during analysis.");
       setAnalyzing(false);
       setParentLoading(false);
@@ -133,9 +139,23 @@ export function Form({ setParentLoading, setParentRequestId }:FormProps) {
           <p className="text-red-600 text-sm mb-4">{errorMessage}</p>
         )}
 
-        <button type="submit" disabled={loading || analyzing} className="shadow-[inset_0_0_0_2px_#616467] w-full text-black px-12 py-4 rounded-full tracking-widest uppercase font-bold bg-transparent hover:bg-[#616467] hover:text-white dark:text-neutral-200 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+        <button type="submit" disabled={loading || analyzing} className="shadow-[inset_0_0_0_2px_#616467] w-full text-white px-12 py-4 rounded-full tracking-widest uppercase font-bold bg-transparent hover:bg-[#616467] hover:text-white dark:text-neutral-200 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
             {analyzing ? 'Analyzing...' : 'Analyze'}
         </button>
+
+        {!isLoggedIn && (
+          <p className="mt-4 text-xs text-neutral-400 text-center">
+            Want your history saved?{" "}
+            <Link className="text-neutral-200 underline underline-offset-4" href="/login">
+              Sign in
+            </Link>
+            {" "}or{" "}
+            <Link className="text-neutral-200 underline underline-offset-4" href="/signup">
+              Create an account
+            </Link>
+            .
+          </p>
+        )}
         
       </form>
     </div>
