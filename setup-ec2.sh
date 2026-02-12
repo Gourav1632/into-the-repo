@@ -18,11 +18,16 @@ if [ ! -f /sys/hypervisor/uuid ] && [ ! -d /sys/devices/virtual/dmi/id/ ]; then
     fi
 fi
 
-# Prompt for values
+# Auto-detect EC2 Public IP
+echo "Detecting EC2 Public IP..."
+EC2_IP=$(curl -s http://checkip.amazonaws.com || curl -s ifconfig.me || echo "localhost")
+echo "✓ Detected IP: ${EC2_IP}"
+echo ""
+
+# Prompt for API keys
 echo "Please provide the following values:"
 echo ""
 
-read -p "Enter your EC2 Public IP Address: " EC2_IP
 read -p "Enter your GitHub Personal Access Token: " GITHUB_TOKEN
 read -p "Enter your Gemini API Key: " GEMINI_API_KEY
 
