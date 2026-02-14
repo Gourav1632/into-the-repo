@@ -65,7 +65,8 @@ echo ""
 echo "📋 Configuration Summary:"
 echo "-------------------------"
 echo "EC2 IP: ${EC2_IP}"
-echo "Backend API: https://into-the-repo.duckdns.org/docs"
+echo "DuckDNS Domain: into-the-repo.duckdns.org"
+echo "Backend API (after SSL): https://into-the-repo.duckdns.org/docs"
 echo "Database Password: ${DB_PASSWORD}"
 echo "Secret Key: ${SECRET_KEY:0:20}..."
 echo ""
@@ -77,13 +78,14 @@ Into the Repo - Deployment Credentials
 Generated on: $(date)
 
 EC2 Public IP: ${EC2_IP}
+DuckDNS Domain: into-the-repo.duckdns.org
 Database Password: ${DB_PASSWORD}
 Secret Key: ${SECRET_KEY}
 
-Backend API: http://${EC2_IP}/docs
+Backend API: https://into-the-repo.duckdns.org/docs
 
 Deploy frontend on Vercel with:
-NEXT_PUBLIC_API_URL=http://${EC2_IP}
+NEXT_PUBLIC_HOST=https://into-the-repo.duckdns.org
 
 IMPORTANT: Keep this file secure and delete after saving credentials elsewhere!
 EOF
@@ -133,14 +135,21 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "✅ Deployment complete!"
     echo ""
     echo "🌐 Access your backend:"
-    echo "   API Docs: http://${EC2_IP}/docs"
+    echo "   API Docs: https://into-the-repo.duckdns.org/docs"
+    echo "   (Initial access: http://${EC2_IP}/docs - will redirect to HTTPS once SSL is active)"
+    echo ""
+    echo "⚠️  IMPORTANT: Set up DuckDNS domain pointing to ${EC2_IP}"
+    echo "   1. Go to https://www.duckdns.org"
+    echo "   2. Create subdomain: into-the-repo"
+    echo "   3. Point to IP: ${EC2_IP}"
+    echo "   4. Caddy will automatically obtain SSL certificate"
     echo ""
     echo "📝 View logs: docker compose logs -f"
     echo "🔄 Restart: docker compose restart"
     echo "🛑 Stop: docker compose down"
     echo ""
     echo "🎨 Deploy frontend on Vercel:"
-    echo "   Set NEXT_PUBLIC_API_URL=http://${EC2_IP}"
+    echo "   Set NEXT_PUBLIC_HOST=https://into-the-repo.duckdns.org"
 else
     echo ""
     echo "Deployment skipped. To deploy manually later:"

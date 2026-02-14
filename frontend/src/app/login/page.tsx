@@ -7,10 +7,8 @@ import { GridBackground } from "@/components/GridBackground";
 import { loginRoute } from "@/utils/APIRoutes";
 import { setAuthToken } from "@/utils/auth";
 import axios, { AxiosError } from "axios";
-import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [formData, setFormData] = useState({
