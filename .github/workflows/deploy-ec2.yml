@@ -23,6 +23,8 @@ jobs:
           PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           HOST: ${{ secrets.EC2_HOST }}
           USER: ubuntu
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
@@ -33,7 +35,7 @@ jobs:
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
           
           # Deploy script
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${USER}@${HOST} << 'ENDSSH'
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ${USER}@${HOST} << ENDSSH
             set -e
             
             echo "🚀 Starting deployment..."
@@ -51,7 +53,7 @@ jobs:
             
             # Login to GitHub Container Registry
             echo "🔐 Logging into GitHub Container Registry..."
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo "${GITHUB_TOKEN}" | docker login ghcr.io -u ${GITHUB_ACTOR} --password-stdin
             
             # Stop existing containers
             echo "🛑 Stopping existing services..."
