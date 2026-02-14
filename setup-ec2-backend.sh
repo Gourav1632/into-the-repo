@@ -56,6 +56,7 @@ GEMINI_API_KEY=${GEMINI_API_KEY}
 BACKEND_PORT=8000
 LOG_LEVEL=info
 NODE_ENV=production
+FRONTEND_HOST=https://into-the-repo.vercel.app
 EOF
 
 echo "✅ Created .env file"
