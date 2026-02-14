@@ -1,5 +1,8 @@
 into-the-repo.duckdns.org {
-    reverse_proxy backend:8000
+    reverse_proxy backend:8000 {
+        # Disable buffering for SSE and long-running requests
+        flush_interval -1
+    }
     
     # Security headers
     header {
