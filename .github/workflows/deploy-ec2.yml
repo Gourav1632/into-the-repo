@@ -57,9 +57,12 @@ jobs:
             echo "🛑 Stopping existing services..."
             docker compose down || true
             
-            # Remove old images to free space
-            echo "🧹 Cleaning up old Docker images..."
-            docker system prune -af || true
+            # Clean up Docker to prevent accumulation
+            echo "🧹 Cleaning up Docker system..."
+            docker system prune -af --volumes || true
+            
+            # Remove any orphaned rootfs directories (known issue)
+            sudo rm -rf /var/lib/docker/rootfs || true
             
             # Pull latest images from GHCR
             echo "📦 Pulling latest Docker images from GitHub Container Registry..."
