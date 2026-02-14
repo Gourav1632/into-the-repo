@@ -5,7 +5,6 @@ on:
     workflows: ["Build and Push Docker Images"]
     types:
       - completed
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -15,35 +14,23 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Deploy to EC2
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
         env:
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ubuntu
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
-        run: |
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "$PRIVATE_KEY" > private_key.pem
-          chmod 600 private_key.pem
-          
-          # Add EC2 to known hosts
-          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
-          
-          # Deploy script
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${USER}@${HOST} << ENDSSH
-            set -e
-            
-            echo "🚀 Starting deployment..."
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          envs: GITHUB_TOKEN,GITHUB_ACTOR
+          script: |
+            echo "🚀 Starting deployment for Into the Repo..."
             
             # Navigate to project directory
             cd ~/into-the-repo || exit 1
             
-            # Pull latest changes
+            # Pull latest compose files
             echo "📥 Pulling latest code from GitHub..."
             git pull origin main
             
@@ -51,79 +38,17 @@ jobs:
             echo "🔗 Using backend-only docker-compose..."
             ln -sf docker-compose.backend.yml docker-compose.yml
             
-            # Login to GitHub Container Registry
+            # Login to GHCR
             echo "🔐 Logging into GitHub Container Registry..."
-            echo "${GITHUB_TOKEN}" | docker login ghcr.io -u ${GITHUB_ACTOR} --password-stdin
+            echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
             
-            # Stop existing containers
-            echo "🛑 Stopping existing services..."
-            docker compose down || true
-            
-            # Clean up Docker to prevent accumulation
-            echo "🧹 Cleaning up Docker system..."
-            docker system prune -af --volumes || true
-            
-            # Remove any orphaned rootfs directories (known issue)
-            sudo rm -rf /var/lib/docker/rootfs || true
-            
-            # Pull latest images from GHCR
-            echo "📦 Pulling latest Docker images from GitHub Container Registry..."
+            # Pull new images and restart seamlessly
+            echo "📦 Pulling and starting services..."
             docker compose pull
-            
-            # Start services
-            echo "▶️  Starting services..."
             docker compose up -d
             
-            # Wait for services to start
-            echo "⏳ Waiting for services to start..."
-            sleep 30
+            # Clean up old images to save EC2 disk space
+            echo "🧹 Cleaning up Docker system..."
+            docker system prune -af
             
-            # Show running containers
-            echo "✅ Deployment complete! Running containers:"
-            docker compose ps
-            
-            # Show recent logs
-            echo "📋 Recent logs:"
-            docker compose logs --tail=50
-            
-          ENDSSH
-          
-          # Cleanup
-          rm -f private_key.pem
-          
-          echo "✅ Deployment successful!"
-
-      - name: Health Check
-        run: |
-          echo "🏥 Checking service health..."
-          sleep 10
-          
-          for i in {1..20}; do
-            if curl -f http://${{ secrets.EC2_HOST }}/health > /dev/null 2>&1; then
-              echo "✅ Backend is healthy!"
-              exit 0
-            fi
-            echo "Attempt $i/20: Waiting for backend to be ready..."
-            sleep 3
-          done
-          
-          echo "⚠️ Health check timeout - services may still be starting"
-          echo "Check deployment status manually at: http://${{ secrets.EC2_HOST }}/docs"
-
-      - name: Deployment Summary
-        if: always()
-        run: |
-          echo "================================"
-          echo "🎉 Deployment Summary"
-          echo "================================"
-          echo "Repository: ${{ github.repository }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Author: ${{ github.actor }}"
-          echo ""
-          echo "🌐 Access your application:"
-          echo "Backend API: http://${{ secrets.EC2_HOST }}/docs"
-          echo "Frontend: Deploy separately on Vercel"
-          echo "================================"
-
-          echo "================================"
+            echo "✅ Deployment complete!"
