@@ -1,15 +1,6 @@
 into-the-repo.duckdns.org {
     reverse_proxy backend:8000
     
-    # Rate limiting
-    rate_limit {
-        zone dynamic {
-            key {remote_host}
-            events 20
-            window 1s
-        }
-    }
-    
     # Security headers
     header {
         X-Frame-Options "SAMEORIGIN"
