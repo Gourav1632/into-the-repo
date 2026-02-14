@@ -4,7 +4,6 @@ export const fileAnalysisRoute = `${host}/api/file`
 export const askAssistantRoute = `${host}/api/ask`
 export const repoVerifyRoute = `${host}/api/verify`
 export const getAnalysisByIdRoute = (id: number) => `${host}/api/analysis/${id}`
-export const progressRoute = `${host}/api/progress`
 export const signupRoute = `${host}/api/auth/signup`
 export const loginRoute = `${host}/api/auth/login`
 export const userMeRoute = `${host}/api/auth/me`

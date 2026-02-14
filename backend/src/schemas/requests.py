@@ -35,12 +35,6 @@ class VerifyRequest(BaseModel):
     branch: str
 
 
-class ProgressResponse(BaseModel):
-    """Response schema for /api/progress endpoint."""
-    request_id: str
-    status: str
-    message: Optional[str] = None
-    progress: Optional[float] = None
 
 
 class AnalyzeResponse(BaseModel):

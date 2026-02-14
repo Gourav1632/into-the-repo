@@ -9,7 +9,7 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 from tempfile import TemporaryDirectory, mkdtemp
-from src.shared.progress import progress_data
+from typing import Callable
 from src.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -274,7 +274,7 @@ def get_file_git_info(local_repo_path: str, filepath: str, branch: str = "HEAD")
             "recent_commits": []
         }
 
-def get_repo_git_analysis(local_repo_path: str, repo_url: str, branch: str, request_id: str) -> Dict[str, Any]:
+def get_repo_git_analysis(local_repo_path: str, repo_url: str, branch: str, request_id: str, progress_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """
     Analyze git repository using local git commands instead of HTTP API calls.
     This is much faster and doesn't hit rate limits.
@@ -284,6 +284,7 @@ def get_repo_git_analysis(local_repo_path: str, repo_url: str, branch: str, requ
         repo_url: GitHub URL (used only for extracting repo name and owner)
         branch: Branch to analyze
         request_id: Request ID for progress tracking
+        progress_callback: Optional callback for progress updates
     
     Returns:
         Dictionary with git analysis stats
@@ -360,14 +361,19 @@ def get_repo_git_analysis(local_repo_path: str, repo_url: str, branch: str, requ
             
             # Update progress
             if i < 10:
+                msg = ""
                 if total_commits <= 5:
-                    progress_data[request_id] = f"Seriously, bro? You want me to analyze just {total_commits} commits?"
+                    msg = f"Seriously, bro? You want me to analyze just {total_commits} commits?"
                 elif total_commits <= 50:
-                    progress_data[request_id] = f"Digging through some history! Found about {total_commits} commits."
+                    msg = f"Digging through some history! Found about {total_commits} commits."
                 else:
-                    progress_data[request_id] = f"{total_commits} commits? Yeah, I don't have all day. I'll just look at the last 50."
+                    msg = f"{total_commits} commits? Yeah, I don't have all day. I'll just look at the last 50."
+                
+                if msg and progress_callback:
+                    progress_callback(msg)
             else:
-                progress_data[request_id] = f"Analysing commit {sha}..."
+                if progress_callback:
+                    progress_callback(f"Analysing commit {sha}...")
             
             # Get files changed in this commit
             try:

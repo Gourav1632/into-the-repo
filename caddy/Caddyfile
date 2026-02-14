@@ -1,17 +1,5 @@
 into-the-repo.duckdns.org {
-    # Use HTTP/1.1 for SSE endpoint
-    @progress_sse {
-        path /api/progress*
-    }
-    reverse_proxy @progress_sse backend:8000 {
-        transport http {
-            versions 1.1
-        }
-        flush_interval -1
-        header_up X-Accel-Buffering no
-    }
-
-    # Fallback for all other routes
+    # Reverse proxy to backend
     reverse_proxy backend:8000 {
         flush_interval -1
         header_up X-Accel-Buffering no

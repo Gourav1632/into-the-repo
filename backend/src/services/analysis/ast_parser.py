@@ -13,7 +13,7 @@ from src.config.language_node_maps import language_node_maps
 from src.services.analysis.file_graph_generator import build_dependency_graph
 from src.services.utilities.git_utils import get_file_git_info
 from src.services.analysis.parse_utils import extract_import_data
-from src.shared.progress import progress_data
+from typing import Callable
 
 
 LANGUAGE_LOADING_MESSAGES = {
@@ -126,7 +126,7 @@ def get_node_name(node):
 
     return node.text.decode()
 
-def parse_code(local_repo_path: str, repo_url: str, branch: str, request_id: str):
+def parse_code(local_repo_path: str, repo_url: str, branch: str, request_id: str, progress_callback: Optional[Callable[[str], None]] = None):
     """
     Parse code from a locally cloned repository.
     
@@ -135,12 +135,14 @@ def parse_code(local_repo_path: str, repo_url: str, branch: str, request_id: str
         repo_url: GitHub repository URL (used only for git info queries)
         branch: Branch name
         request_id: Request ID for progress tracking
+        progress_callback: Optional callback for progress updates
     
     Returns:
         Dictionary with AST and dependency graph
     """
     print("Parsing repo ...")
-    progress_data[request_id] = "Collecting source code..."
+    if progress_callback:
+        progress_callback("Collecting source code...")
     print(f"[DEBUG] parse_code starting for request_id: {request_id}")
     
     result = {}
@@ -162,12 +164,14 @@ def parse_code(local_repo_path: str, repo_url: str, branch: str, request_id: str
                 source_files.append((file_path, relative_path, language))
     
     print(f"Found {len(source_files)} source files to parse")
-    progress_data[request_id] = f"Found {len(source_files)} source files to parse"
+    if progress_callback:
+        progress_callback(f"Found {len(source_files)} source files to parse")
     
     for idx, (file_path, relative_path, language) in enumerate(source_files, 1):
         norm_path = os.path.normpath(relative_path)
         progress_msg = f"[{idx}/{len(source_files)}] Analyzing {norm_path} ({language})..."
-        progress_data[request_id] = progress_msg
+        if progress_callback:
+            progress_callback(progress_msg)
         print(f"[DEBUG] {progress_msg}")
         
         parser = get_parser(language)
@@ -267,7 +271,8 @@ def parse_code(local_repo_path: str, repo_url: str, branch: str, request_id: str
             print(f"Error processing {norm_path}: {e}")
     
     print("Repo parsed successfully...")
-    progress_data[request_id] = "Building architecture map..."
+    if progress_callback:
+        progress_callback("Building architecture map...")
     graph = build_dependency_graph(result)
     
     # Debug logging

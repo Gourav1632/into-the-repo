@@ -17,8 +17,6 @@ from src.middleware.rate_limiter import limiter
 from src.core.logging import get_logger
 from sqlalchemy.orm import Session
 import traceback
-from fastapi.responses import StreamingResponse
-from src.shared.progress import progress_data
 from fastapi import Request
 from src.tasks.worker import app as celery_app
 from src.schemas.requests import AskRequest, RepoRequest, FileGraphRequest, VerifyRequest
@@ -56,64 +54,6 @@ async def get_current_user_from_header(authorization: Optional[str] = Header(Non
 
 # === Routes ===
 
-@router.get("/api/progress")
-async def progress(request:Request ,request_id: str):
-    logger.info(f"SSE connection opened for request_id: {request_id}")
-    
-    async def event_generator():
-        last_message = None
-        no_change_count = 0
-        max_no_change = 240  # 60 seconds of no change before timeout
-        
-        while True:
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected for request_id: {request_id}")
-                break
-            
-            # Try to get detailed progress from progress_data first
-            progress_msg = progress_data.get(request_id)
-            
-            # Fallback to Celery task state if no detailed progress
-            if not progress_msg:
-                task = celery_app.AsyncResult(request_id)
-                
-                if task.state == 'PROGRESS':
-                    progress_msg = task.info.get('status', 'Processing...')
-                elif task.state == 'SUCCESS':
-                    progress_msg = 'done'
-                elif task.state == 'FAILURE':
-                    progress_msg = f'Error: {str(task.info)}'
-                else:
-                    progress_msg = 'Waiting...'
-            
-            if progress_msg != last_message:
-                no_change_count = 0
-                if progress_msg == 'done':
-                    logger.info(f"Analysis completed for request_id: {request_id}")
-                    yield "event: done\ndata: Analysis complete\n\n"
-                    break
-                else:
-                    yield f"data: {progress_msg}\n\n"
-                last_message = progress_msg
-            else:
-                no_change_count += 1
-                if no_change_count > max_no_change:
-                    # Send a heartbeat to keep connection alive
-                    yield ": heartbeat\n\n"
-            
-            await asyncio.sleep(0.1)
-        
-        logger.info(f"SSE stream closed for request_id: {request_id}")
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "Transfer-Encoding": "chunked",
-        }
-    )
 
 
 @router.post("/api/verify")

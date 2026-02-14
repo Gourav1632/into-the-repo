@@ -16,8 +16,7 @@ from src.services.analysis.ast_parser import parse_code
 from src.core.logging import get_logger
 from src.core.database import SessionLocal
 from src.models.database import RepoAnalysis, UserAnalysisHistory
-from src.shared.progress import progress_data
-from typing import Optional
+from typing import Optional, Callable
 
 logger = get_logger(__name__)
 
@@ -74,9 +73,13 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_i
     db = SessionLocal()
     local_repo_path = None
     
+    # Define progress callback
+    def progress_callback(message: str):
+        self.update_state(state='PROGRESS', meta={'status': message})
+        logger.info(f"Progress update for {request_id}: {message}")
+
     try:
-        self.update_state(state='PROGRESS', meta={'status': 'Cloning repository...'})
-        progress_data[request_id] = 'Initializing scan...'
+        progress_callback('Initializing scan...')
         logger.info(f"Starting analysis task for {repo_url} (request_id: {request_id})")
         
         # First, get the latest commit SHA to check if we need to re-analyze
@@ -109,14 +112,13 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_i
             logger.info(f"Cloned {repo_url} to {local_repo_path}")
             
             # Parse code
-            repo_analysis = parse_code(local_repo_path, repo_url, branch, request_id)
+            repo_analysis = parse_code(local_repo_path, repo_url, branch, request_id, progress_callback)
             logger.info(f"Code parsing complete, found {len(repo_analysis)} files")
             
-            progress_data[request_id] = 'Analysing git history...'
-            self.update_state(state='PROGRESS', meta={'status': 'Analyzing git history...'})
+            progress_callback('Analyze git history...')
             
             # Get git analysis
-            git_analysis = get_repo_git_analysis(local_repo_path, repo_url, branch, request_id)
+            git_analysis = get_repo_git_analysis(local_repo_path, repo_url, branch, request_id, progress_callback)
             logger.info(f"Completed analysis for {repo_url}")
         
             # Save to database with commit SHA
@@ -178,13 +180,12 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_i
             logger.error("repo_analysis_id is None - database save may have failed")
         
         # Mark progress as done before returning
-        progress_data[request_id] = "Putting the final pieces. Hope it was worth the wait (it probably wasn't)."
+        progress_callback("Putting the final pieces. Hope it was worth the wait (it probably wasn't).")
         
         # Small delay to ensure client sees final message
         import time
         time.sleep(0.5)
         
-        progress_data[request_id] = "done"
         logger.info(f"Analysis completed for {repo_url}, returning id={repo_analysis_id}")
         
         # Return the combined analysis with database ID
@@ -199,7 +200,7 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_i
         
     except Exception as e:
         logger.error(f"Error analyzing repository {repo_url}: {e}", exc_info=True)
-        progress_data[request_id] = f"Error: {str(e)}"
+        # progress_data update removed as it's not needed for polling (status will be FAILURE)
         self.update_state(
             state='FAILURE',
             meta={'error': str(e)}
@@ -220,7 +221,6 @@ def analyze_repository(self, repo_url: str, branch: str, request_id: str, user_i
         
         # Clean up progress data after a delay to ensure client gets final message
         # (This is optional but helps prevent memory leakage from old requests)
-        # progress_data.pop(request_id, None)
 
 
 @app.task(name='clone_repository', bind=True)
